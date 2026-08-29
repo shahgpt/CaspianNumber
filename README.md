@@ -63,6 +63,24 @@ docker compose up -d --build
 
 > ⚠️ اگر `docker pull` روی سرور کند/قطع است، میرور داخلی (آروان/های‌وب) را تنظیم کنید.
 
+### دیپلوی عمومی روی `phone.rasha-paper.com`
+
+در حالت production، کانتینر فقط روی `127.0.0.1:8899` در دسترس است و ترافیک
+عمومی باید از Nginx روی پورت‌های ۸۰ و ۴۴۳ عبور کند. کانفیگ آماده در
+`deploy/nginx/phone.rasha-paper.com.conf` قرار دارد.
+
+قبل از اجرا، `.env.example` را به `.env` کپی کنید و دست‌کم `SECRET_KEY` و
+`ADMIN_PASSWORD` را با مقادیر قوی جایگزین کنید. سپس:
+
+```bash
+docker compose up -d --build
+curl -I http://127.0.0.1:8899
+```
+
+در DNS یک رکورد `A` برای `phone.rasha-paper.com` به IP عمومی سرور بسازید و
+پورت‌های TCP 80/443 را تا این VM هدایت کنید. بعد از فعال‌کردن Nginx، گواهی
+HTTPS را با Certbot صادر کنید.
+
 ## اجرای محلی (توسعه)
 
 ```bash

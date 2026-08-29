@@ -3,17 +3,27 @@ services:
     build: .
     container_name: caspian-number
     ports:
-      - "8899:8899"
+      # Public traffic must enter through Nginx on ports 80/443.
+      - "127.0.0.1:8899:8899"
     volumes:
       - app-data:/data
     environment:
-      # ⚠️ قبل از دیپلوی عوض کنید:
-      SECRET_KEY: "${SECRET_KEY:-please-change-me}"
-      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
-      OPENAI_MODEL: "${OPENAI_MODEL:-gpt-4o-mini}"
+      SECRET_KEY: "${SECRET_KEY:?Set SECRET_KEY in .env}"
       ADMIN_USERNAME: "${ADMIN_USERNAME:-admin}"
-      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-admin123}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}"
+      DIRECT_PREFIX: "${DIRECT_PREFIX:-02144}"
+      AI_BASE_URL: "${AI_BASE_URL:-https://api.openai.com/v1}"
+      AI_API_KEY: "${AI_API_KEY:-}"
+      AI_MODEL: "${AI_MODEL:-gpt-4o-mini}"
+    init: true
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   app-data:
