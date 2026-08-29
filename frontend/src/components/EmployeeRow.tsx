@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import gsap from 'gsap'
 import { motion } from 'motion/react'
 import type { Transition } from 'motion/react'
@@ -189,83 +190,88 @@ export default function EmployeeRow({ emp, pinned = false, onTogglePin, layoutTr
         )}
       </motion.li>
 
-      {open && (
-        <div
-          ref={dialogRef}
-          role="dialog"
-          aria-modal="true"
-          aria-label={`تماس با ${emp.full_name}`}
-          onClick={(e) => {
-            if (e.target === e.currentTarget) close()
-          }}
-          className="fixed inset-0 z-50 grid place-items-center bg-deep-950/45 px-5 backdrop-blur-sm"
-        >
+      {/* شیت روی body سوار می‌شود، نه داخلِ <ul> فهرست: آن ul درونِ یک
+          div با z-index است، پس هر z-50‌ای اینجا در همان لایه حبس می‌شد و
+          نوارِ چسبانِ جستجو و راهنمای اسکرول رویش می‌افتادند. */}
+      {open &&
+        createPortal(
           <div
-            ref={panelRef}
-            className="relative w-full max-w-sm rounded-2xl border border-sand-200 bg-paper p-6 shadow-panel"
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`تماس با ${emp.full_name}`}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) close()
+            }}
+            className="fixed inset-0 z-50 grid place-items-center bg-deep-950/45 px-5 backdrop-blur-sm"
           >
-            <button
-              type="button"
-              onClick={close}
-              aria-label="بستن"
-              className="absolute end-4 top-4 grid h-8 w-8 place-items-center rounded-lg text-ink-400 transition-colors duration-200 hover:bg-sand-100 hover:text-ink-700"
+            <div
+              ref={panelRef}
+              className="relative w-full max-w-sm rounded-2xl border border-sand-200 bg-paper p-6 shadow-panel"
             >
-              <X strokeWidth={1.9} className="h-4 w-4" />
-            </button>
+              <button
+                type="button"
+                onClick={close}
+                aria-label="بستن"
+                className="absolute end-4 top-4 grid h-8 w-8 place-items-center rounded-lg text-ink-400 transition-colors duration-200 hover:bg-sand-100 hover:text-ink-700"
+              >
+                <X strokeWidth={1.9} className="h-4 w-4" />
+              </button>
 
-            <h2 className="pe-10 text-lg font-bold leading-snug text-ink-900">{emp.full_name}</h2>
-            {meta && <p className="mt-1 text-sm text-ink-500">{meta}</p>}
+              <h2 className="pe-10 text-lg font-bold leading-snug text-ink-900">{emp.full_name}</h2>
+              {meta && <p className="mt-1 text-sm text-ink-500">{meta}</p>}
 
-            {/* مستقیم اول می‌آید: از گوشی همین یکی گرفتنی است.
-                داخلی زیرِ آن می‌ماند برای وقتی که کاربر پشتِ تلفنِ سازمان است. */}
-            <div className="mt-5 space-y-2.5">
-              {direct && (
-                <a
-                  ref={(el) => {
-                    optionRefs.current[0] = el
-                  }}
-                  href={`tel:${toEnDigits(direct)}`}
-                  onClick={() => close()}
-                  className="flex items-center justify-between gap-3 rounded-xl border border-sand-200 bg-sand-50 px-4 py-3.5 transition-[border-color,box-shadow,background-color] duration-200 hover:border-sea-400 hover:bg-paper hover:ring-4 hover:ring-sea-500/15"
-                >
-                  <span className="flex items-center gap-2.5">
-                    <Phone strokeWidth={1.8} className="h-[18px] w-[18px] text-sea-600 dark:text-sea-400" />
-                    <span>
-                      <span className="block text-sm font-bold text-ink-900">شماره مستقیم</span>
-                      <span className="block text-xs text-ink-500">تماس از بیرون سازمان</span>
+              {/* مستقیم اول می‌آید: از گوشی همین یکی گرفتنی است.
+                  داخلی زیرِ آن می‌ماند برای وقتی که کاربر پشتِ تلفنِ سازمان است. */}
+              <div className="mt-5 space-y-2.5">
+                {direct && (
+                  <a
+                    ref={(el) => {
+                      optionRefs.current[0] = el
+                    }}
+                    href={`tel:${toEnDigits(direct)}`}
+                    onClick={() => close()}
+                    className="flex items-center justify-between gap-3 rounded-xl border border-sand-200 bg-sand-50 px-4 py-3.5 transition-[border-color,box-shadow,background-color] duration-200 hover:border-sea-400 hover:bg-paper hover:ring-4 hover:ring-sea-500/15"
+                  >
+                    <span className="flex items-center gap-2.5">
+                      <Phone strokeWidth={1.8} className="h-[18px] w-[18px] text-sea-600 dark:text-sea-400" />
+                      <span>
+                        <span className="block text-sm font-bold text-ink-900">شماره مستقیم</span>
+                        <span className="block text-xs text-ink-500">تماس از بیرون سازمان</span>
+                      </span>
                     </span>
-                  </span>
-                  <span dir="ltr" className="tnum font-bold text-sea-700 dark:text-sea-300">
-                    {faDigits(direct)}
-                  </span>
-                </a>
-              )}
-
-              {extension && (
-                <a
-                  ref={(el) => {
-                    optionRefs.current[1] = el
-                  }}
-                  href={`tel:${toEnDigits(extension)}`}
-                  onClick={() => close()}
-                  className="flex items-center justify-between gap-3 rounded-xl border border-sand-200 bg-sand-50 px-4 py-3.5 transition-[border-color,box-shadow,background-color] duration-200 hover:border-sea-400 hover:bg-paper hover:ring-4 hover:ring-sea-500/15"
-                >
-                  <span className="flex items-center gap-2.5">
-                    <Phone strokeWidth={1.8} className="h-[18px] w-[18px] text-sea-600 dark:text-sea-400" />
-                    <span>
-                      <span className="block text-sm font-bold text-ink-900">داخلی</span>
-                      <span className="block text-xs text-ink-500">از تلفن سازمانی</span>
+                    <span dir="ltr" className="tnum font-bold text-sea-700 dark:text-sea-300">
+                      {faDigits(direct)}
                     </span>
-                  </span>
-                  <span dir="ltr" className="tnum font-bold text-sea-700 dark:text-sea-300">
-                    {faDigits(extension)}
-                  </span>
-                </a>
-              )}
+                  </a>
+                )}
+
+                {extension && (
+                  <a
+                    ref={(el) => {
+                      optionRefs.current[1] = el
+                    }}
+                    href={`tel:${toEnDigits(extension)}`}
+                    onClick={() => close()}
+                    className="flex items-center justify-between gap-3 rounded-xl border border-sand-200 bg-sand-50 px-4 py-3.5 transition-[border-color,box-shadow,background-color] duration-200 hover:border-sea-400 hover:bg-paper hover:ring-4 hover:ring-sea-500/15"
+                  >
+                    <span className="flex items-center gap-2.5">
+                      <Phone strokeWidth={1.8} className="h-[18px] w-[18px] text-sea-600 dark:text-sea-400" />
+                      <span>
+                        <span className="block text-sm font-bold text-ink-900">داخلی</span>
+                        <span className="block text-xs text-ink-500">از تلفن سازمانی</span>
+                      </span>
+                    </span>
+                    <span dir="ltr" className="tnum font-bold text-sea-700 dark:text-sea-300">
+                      {faDigits(extension)}
+                    </span>
+                  </a>
+                )}
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
     </>
   )
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useState } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import Login from './pages/Login'
 import Directory from './pages/Directory'
@@ -67,27 +67,42 @@ function GateSplash() {
   )
 }
 
+/* هر مسیرِ تازه از بالا باز می‌شود. react-router اسکرول را خودش
+   برنمی‌گرداند، پس بعد از ورود کاربر همان‌جایی می‌ماند که در صفحه‌ی ورود
+   بود — روی موبایل که فرم پایینِ صفحه است، وسطِ دفترچه. پیش از رسم
+   انجام می‌شود تا یک فریم در جای غلط دیده نشود. */
+function ScrollToTop() {
+  const { pathname } = useLocation()
+  useLayoutEffect(() => {
+    window.scrollTo(0, 0)
+  }, [pathname])
+  return null
+}
+
 export default function App() {
   return (
-    <Routes>
-      <Route path="/login" element={<Login />} />
-      <Route
-        path="/"
-        element={
-          <Require>
-            <Directory />
-          </Require>
-        }
-      />
-      <Route
-        path="/admin"
-        element={
-          <Require admin>
-            <Admin />
-          </Require>
-        }
-      />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <>
+      <ScrollToTop />
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route
+          path="/"
+          element={
+            <Require>
+              <Directory />
+            </Require>
+          }
+        />
+        <Route
+          path="/admin"
+          element={
+            <Require admin>
+              <Admin />
+            </Require>
+          }
+        />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </>
   )
 }
