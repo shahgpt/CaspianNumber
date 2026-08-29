@@ -844,3 +844,12 @@ button.roster-row:disabled {
     animation: none !important;
   }
 }
+
+/* iOS زیر ۱۶px روی فوکوسِ فیلد زوم می‌کند و صفحه را جابه‌جا می‌اندازد. */
+@media (max-width: 767px) {
+  input:not([type='checkbox']):not([type='radio']),
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
