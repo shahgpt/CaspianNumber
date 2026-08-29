@@ -109,7 +109,7 @@ export default function EmployeeAutocomplete({ value, onValueChange, onSearch, b
       {typed && (status || results.length > 0) && (
         <AutocompleteContent
           sideOffset={8}
-          className="suggest-popup max-h-none rounded-xl bg-paper py-1.5 shadow-panel ring-1 ring-sand-200 duration-200 ease-out-expo"
+          className="suggest-popup rounded-xl bg-paper py-1.5 shadow-panel ring-1 ring-sand-200 duration-200 ease-out-expo"
         >
           {status && (
             <AutocompleteStatus role="status" aria-live="polite" className="px-3 py-2 text-[13px] text-ink-400">
@@ -122,7 +122,7 @@ export default function EmployeeAutocomplete({ value, onValueChange, onSearch, b
               جهت‌دار ترتیبی را می‌رود که روی صفحه نیست. */}
           <AutocompleteList
             key={results.map((e) => e.id).join(',')}
-            className="max-h-[min(58vh,24rem)] px-1.5 py-1"
+            className="px-1.5 py-1"
           >
             {results.map((emp) => {
               const unit = emp.department || emp.company || ''

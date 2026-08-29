@@ -6,7 +6,7 @@
       راست‌به‌چپ سرِ لبه‌ی درست بنشینند.
    ۳) رنگِ نوارِ اسکرول از توکنِ دنیا خوانده می‌شود، نه از متغیرِ shadcn. */
 
-import { createContext, useContext, useId, useState, useRef, useCallback, useEffect } from 'react'
+import { createContext, useContext, useId, useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react'
 import type * as React from 'react'
 import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
@@ -374,6 +374,11 @@ const AutocompleteBackdrop = ({ className, ...props }: React.HTMLAttributes<HTML
 
 // -- Positioner --
 
+/* کمترین قدی که یک فهرستِ پیشنهاد ارزشِ باز شدن دارد، و فاصله‌ای که
+   از لبه‌ی دیدرس نگه می‌داریم */
+const MIN_POPUP = 96
+const EDGE_GAP = 8
+
 interface AutocompletePositionerProps extends React.HTMLAttributes<HTMLDivElement> {
   align?: 'start' | 'end' | 'center'
   sideOffset?: number
@@ -401,34 +406,66 @@ const AutocompletePositioner = ({
     const el = anchorRef.current
     if (!el) return
     const rect = el.getBoundingClientRect()
-    const s: React.CSSProperties = { position: 'fixed', width: rect.width }
 
-    if (side === 'bottom') {
-      s.top = rect.bottom + sideOffset
+    /* لبه‌ی دیدرس، نه لبه‌ی پنجره. با کیبوردِ بازِ موبایل این دو یکی
+       نیستند و innerHeight فضایی را می‌شمارد که زیر کیبورد است. */
+    const vv = window.visualViewport
+    const viewTop = vv ? vv.offsetTop : 0
+    const viewBottom = viewTop + (vv ? vv.height : window.innerHeight)
+    const below = viewBottom - rect.bottom - sideOffset - EDGE_GAP
+    const above = rect.top - viewTop - sideOffset - EDGE_GAP
+    /* زیرِ فیلد جا نبود و بالایش بیشتر بود، برو بالا */
+    const placeTop = side === 'top' || (below < MIN_POPUP && above > below)
+
+    /* مختصاتِ سند، نه مختصاتِ پنجره: position:fixed را مرورگرِ موبایل
+       با کیبوردِ باز به ویوپورتِ دیداری می‌چسباند و همان جابه‌جایی،
+       پاپ‌آپ را روی خودِ فیلد می‌نشاند. */
+    const s: React.CSSProperties = {
+      position: 'absolute',
+      width: rect.width,
+      maxHeight: Math.max(MIN_POPUP, placeTop ? above : below)
+    }
+    const shift: string[] = []
+
+    if (placeTop) {
+      s.top = rect.top + window.scrollY - sideOffset
+      shift.push('translateY(-100%)')
     } else {
-      s.bottom = window.innerHeight - rect.top + sideOffset
+      s.top = rect.bottom + window.scrollY + sideOffset
     }
 
     if (align === 'start') {
-      s.left = rect.left + alignOffset
+      s.left = rect.left + window.scrollX + alignOffset
     } else if (align === 'end') {
-      s.right = window.innerWidth - rect.right + alignOffset
+      s.left = rect.right + window.scrollX + alignOffset
+      shift.push('translateX(-100%)')
     } else {
-      s.left = rect.left + rect.width / 2 + alignOffset
-      s.transform = 'translateX(-50%)'
+      s.left = rect.left + rect.width / 2 + window.scrollX + alignOffset
+      shift.push('translateX(-50%)')
     }
+
+    if (shift.length) s.transform = shift.join(' ')
 
     setPosStyle(s)
   }, [anchorRef, side, sideOffset, align, alignOffset])
 
-  useEffect(() => {
+  /* پیش از اولین رنگ‌آمیزی، وگرنه پاپ‌آپ یک فریم ته صفحه ظاهر می‌شود */
+  useLayoutEffect(() => {
     if (!open) return
     updatePosition()
     window.addEventListener('resize', updatePosition)
     window.addEventListener('scroll', updatePosition, true)
+    /* باز شدنِ کیبوردِ موبایل نه resize پنجره می‌دهد نه لزوماً scroll —
+       فقط ویوپورتِ دیداری تکان می‌خورد. بدون این دو شنونده مختصات
+       کهنه می‌ماند. */
+    const vv = window.visualViewport
+    vv?.addEventListener('resize', updatePosition)
+    vv?.addEventListener('scroll', updatePosition)
     return () => {
       window.removeEventListener('resize', updatePosition)
       window.removeEventListener('scroll', updatePosition, true)
+      vv?.removeEventListener('resize', updatePosition)
+      vv?.removeEventListener('scroll', updatePosition)
     }
   }, [open, updatePosition])
 
@@ -484,7 +521,7 @@ const AutocompleteContent = ({
           <div
             data-slot='autocomplete-popup'
             className={cn(
-              'text-popover-foreground ring-foreground/10 bg-background flex max-h-96 w-full flex-col overflow-hidden rounded-lg py-0.5 shadow-md ring-1',
+              'text-popover-foreground ring-foreground/10 bg-background flex max-h-[inherit] w-full flex-col overflow-hidden rounded-lg py-0.5 shadow-md ring-1',
               'animate-in fade-in-0 zoom-in-95 slide-in-from-top-2 duration-300 ease-out',
               className
             )}
@@ -510,7 +547,7 @@ const AutocompleteList = ({ className, id, ...props }: AutocompleteListProps) =>
       id={id ?? `${baseId}-list`}
       role='listbox'
       className={cn(
-        'max-h-96 overflow-y-auto overscroll-contain scroll-py-1 [&:not(:empty)]:px-1 [&:not(:empty)]:py-1',
+        'min-h-0 overflow-y-auto overscroll-contain scroll-py-1 [&:not(:empty)]:px-1 [&:not(:empty)]:py-1',
         '[scrollbar-width:thin] [scrollbar-color:rgb(var(--ink-400))_transparent]',
         '[&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent',
         '[&::-webkit-scrollbar-button]:hidden',
