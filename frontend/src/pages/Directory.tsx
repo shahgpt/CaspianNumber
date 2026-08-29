@@ -12,7 +12,7 @@ import BrandLockup from '../components/BrandLockup'
 import ThemeToggle from '../components/ThemeToggle'
 import { countTo, faDigits, prefersReducedMotion, shouldAnimate } from '../lib/motion'
 import { readPins, writePins } from '../lib/pins'
-import { CONTOURS } from './login-contours'
+import { CONTOURS, SOUNDINGS } from './login-contours'
 
 /* قرارداد Impeccable — دنیای «نقشه‌ی عمق‌سنجی» (ادامه‌ی صفحه‌ی ورود)
    THESIS: دفترچه، خودِ نقشه است. صفحه همان کاغذِ سفیدِ ورود می‌ماند و
@@ -35,6 +35,7 @@ export default function Directory() {
   })
 
   const pageRef = useRef<HTMLDivElement>(null)
+  const chartRef = useRef<HTMLDivElement>(null)
   const mastheadRef = useRef<HTMLDivElement>(null)
   const logoRef = useRef<HTMLDivElement>(null)
   const ruleRef = useRef<SVGSVGElement>(null)
@@ -139,6 +140,95 @@ export default function Directory() {
     }
   }, [isEmpty, query])
 
+  /* --- پژواکِ عمق‌سنج ---
+         هر ده ثانیه یک حلقه از کنارِ نشانِ برند بیرون می‌زند و خطوطِ ترازی
+         را که از آن‌ها می‌گذرد روشن می‌کند. سرعتِ ثابت (ease none) چون
+         پژواک شتاب نمی‌گیرد؛ صدا در آب سرعتِ خودش را دارد.
+         این تنها حرکتِ «فعالِ» پس‌زمینه است — بقیه فقط می‌لغزند. */
+  useEffect(() => {
+    const chart = chartRef.current
+    // اینجا shouldAnimate() نه: آن نگهبان برای حرکتِ یک‌باره است که اگر در
+    // تبِ پنهان یخ بزند محتوا پنهان می‌ماند. این یک حلقه‌ی بی‌پایانِ
+    // پس‌زمینه است — GSAP خودش در تبِ پنهان می‌ایستد و با برگشتِ کاربر
+    // ادامه می‌دهد. با shouldAnimate() هرکس صفحه را در تبِ پس‌زمینه باز
+    // می‌کرد، پژواک را دیگر هرگز نمی‌دید.
+    if (!chart || prefersReducedMotion()) return
+    const lines = Array.from(chart.querySelectorAll<SVGPathElement>('.echo-line'))
+    if (!lines.length) return
+
+    const ctx = gsap.context(() => {
+      lines.forEach((line, i) => {
+        /* از هر حلقه فقط کمانِ پایینی توی کادرِ سربرگ است — کمتر از یک
+           سومِ طول. پس یک قطعه‌ی تنها تقریباً همیشه بیرونِ قاب می‌ماند و
+           حرکت دیده نمی‌شود. به‌جایش SEGMENTS قطعه‌ی هم‌فاصله دورِ حلقه
+           می‌چینیم: همیشه چندتایی داخلِ کادر است.
+           طولِ تکرار دقیقاً len/SEGMENTS است و آفست هم به همان اندازه
+           می‌رود — پس حلقه بی‌درز بسته می‌شود و پرش ندارد. */
+        const SEGMENTS = 5
+        const len = line.getTotalLength()
+        const period = len / SEGMENTS
+        const dash = period * 0.36
+        gsap.set(line, { strokeDasharray: `${dash} ${period - dash}`, strokeDashoffset: 0 })
+        // ترازِ بیرونی‌تر کندتر می‌گردد — عمقِ بیشتر، پژواکِ دیرتر
+        gsap.to(line, {
+          strokeDashoffset: -period,
+          duration: 7 + i * 2,
+          ease: 'none',
+          repeat: -1,
+        })
+      })
+    }, chart)
+
+    return () => ctx.revert()
+  }, [])
+
+  /* --- عمقِ حاشیه: پارالاکس ---
+         سه لایه‌ی نقشه با سه ضریب جابه‌جا می‌شوند تا صفحه «کاغذ» نماند و
+         لایه‌لایه شود. یک شنونده، یک rAF، دو متغیرِ CSS — بقیه‌ی کار در
+         استایل‌شیت انجام می‌شود، پس اینجا هیچ layout ای خوانده نمی‌شود.
+         روی لمس، پارالاکسِ اشاره‌گر معنا ندارد؛ فقط اسکرول می‌ماند. */
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart || prefersReducedMotion()) return
+
+    const fine = window.matchMedia('(pointer: fine)').matches
+    let raf = 0
+    let px = 0
+    let py = 0
+    let sy = 0
+
+    function flush() {
+      raf = 0
+      if (!chart) return
+      chart.style.setProperty('--px', `${px.toFixed(2)}px`)
+      chart.style.setProperty('--py', `${py.toFixed(2)}px`)
+      chart.style.setProperty('--sy', `${sy.toFixed(2)}px`)
+    }
+    function schedule() {
+      if (!raf) raf = requestAnimationFrame(flush)
+    }
+    function onMove(e: PointerEvent) {
+      px = (e.clientX / window.innerWidth - 0.5) * 46
+      py = (e.clientY / window.innerHeight - 0.5) * 26
+      schedule()
+    }
+    function onScroll() {
+      // سقف دارد: پایین‌ترِ حاشیه‌ی نقشه دیگر حرکتی لازم نیست
+      sy = Math.min(window.scrollY, 420) * 0.34
+      schedule()
+    }
+
+    if (fine) window.addEventListener('pointermove', onMove, { passive: true })
+    window.addEventListener('scroll', onScroll, { passive: true })
+    onScroll()
+
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('scroll', onScroll)
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [])
+
   /* --- راهنمای اسکرول ---
          نگهبانی ته فهرست می‌نشیند: تا وقتی دیده نشده یعنی عمق ادامه دارد و
          راهنما کفِ صفحه می‌ماند. حاشیه‌ی ۹۶ پیکسلی به‌اندازه‌ی قدِ خودِ راهنماست
@@ -209,10 +299,33 @@ export default function Directory() {
   return (
     <div className="relative min-h-dvh bg-[rgb(var(--canvas))]">
       {/* حاشیه‌ی نقشه — همان خطوط ترازِ صفحه‌ی ورود، ایستا و بسیار محو */}
-      <div className="chart-margin" aria-hidden="true">
+      <div ref={chartRef} className="chart-margin" aria-hidden="true">
         <svg viewBox="0 0 1200 800" preserveAspectRatio="xMidYMax slice" className="h-full w-full">
+          {/* لایه‌ی پایه — خطوط ایستا */}
           {CONTOURS.slice(4).map((d, i) => (
             <path key={i} d={d} className="sounding-line" />
+          ))}
+
+          {/* لایه‌ی پژواک — همان خطوط، روشن، اما هر کدام فقط یک قطعه‌ی
+              کوتاه که دورِ ترازِ خودش می‌گردد */}
+          <g className="chart-echo">
+            {CONTOURS.slice(4).map((d, i) => (
+              <path key={i} d={d} className="echo-line" />
+            ))}
+          </g>
+
+          {/* نشانه‌های عمق — هرکدام روی ساعتِ خودش */}
+          {SOUNDINGS.map(([cx, cy, r], i) => (
+            <g key={i}>
+              <circle cx={cx} cy={cy} r={r} className="chart-sounding" style={{ animationDelay: `${i * 0.9}s` }} />
+              <circle
+                cx={cx}
+                cy={cy}
+                r={r}
+                className="chart-sounding-ping"
+                style={{ animationDelay: `${i * 0.9}s` }}
+              />
+            </g>
           ))}
         </svg>
         {/* ردپای برند در مقیاسِ نقشه — بریده به لبه‌ی حاشیه، زیرِ همان

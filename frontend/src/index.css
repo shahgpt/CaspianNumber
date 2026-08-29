@@ -359,20 +359,129 @@ input:-webkit-autofill:focus {
   position: absolute;
   inset-block-start: 0;
   inset-inline: 0;
-  height: 340px;
+  height: 420px;
   overflow: hidden;
   pointer-events: none;
-  opacity: 0.55;
+  opacity: 0.9;
+  /* مبدأ پارالاکس — تا پیش از اجرای JS همه‌چیز سرِ جای خودش است */
+  --px: 0px;
+  --py: 0px;
+  --sy: 0px;
 }
+/* ---------- حاشیه‌ی نقشه، زنده ----------
+   سه لایه با سه سرعت: خطوط تراز (دور)، واترمارک (نزدیک)، و پژواکِ عمق‌سنج.
+   قاعده‌ی چیدمان: پارالاکس روی خاصیتِ مستقلِ `translate` می‌نشیند و
+   انیمیشنِ حلقه‌ای روی `transform` — پس دو حرکت روی یک گره با هم دعوا
+   نمی‌کنند و هیچ‌کدام دیگری را بازنویسی نمی‌کند.
+   هر سه فقط ترنسفورم‌اند: کامپوزیتور، بدون layout و بدون repaint. */
+
+/* جزر و مد — نقشه بسیار آرام می‌لغزد */
+@keyframes cn-tide {
+  50% {
+    transform: translate3d(-1.4%, 6px, 0);
+  }
+}
+@keyframes cn-drift {
+  50% {
+    transform: rotate(-8deg) translate3d(1.8%, -10px, 0);
+  }
+}
+.chart-margin > svg {
+  translate: calc(var(--px) * 0.4) calc(var(--py) * 0.4 + var(--sy) * 0.55);
+  animation: cn-tide 34s ease-in-out infinite;
+}
+.chart-margin .chart-watermark {
+  translate: calc(var(--px) * -1) calc(var(--py) * -1 - var(--sy) * 0.25);
+  animation: cn-drift 46s ease-in-out infinite;
+}
+
+/* پژواکِ عمق‌سنج — روی هر تراز یک قطعه‌ی کوتاهِ روشن می‌گردد. GSAP
+   با strokeDashoffset می‌راندش؛ همان تکنیکی که صفحه‌ی ورود با آن خطوط
+   را «می‌کشد»، اینجا بی‌پایان و بسیار کندتر. */
+/* هاله فقط روی همین لایه — یک drop-shadow روی گروهی که پنج مسیر دارد،
+   نه پنج فیلترِ جدا. پس‌زمینه است و نباید خرجِ رنگ‌آمیزی بالا ببرد. */
+.chart-echo {
+  filter: drop-shadow(0 0 10px rgb(var(--contour) / 0.7));
+}
+.echo-line {
+  fill: none;
+  stroke: rgb(var(--contour));
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  opacity: 1;
+}
+
+/* نشانه‌های عمق — خوانده می‌شوند، محو می‌شوند، دوباره خوانده می‌شوند */
+@keyframes cn-sounding {
+  0%,
+  78%,
+  100% {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+  10%,
+  56% {
+    opacity: 0.85;
+    transform: scale(1.6);
+  }
+}
+/* هر نشانه که خوانده می‌شود، یک حلقه از آن بیرون می‌زند — پژواکِ همان
+   یک نقطه. اندازه‌ی حلقه با scale می‌آید نه با r، تا روی کامپوزیتور بماند. */
+@keyframes cn-sounding-ping {
+  0% {
+    opacity: 0;
+    transform: scale(1);
+  }
+  12% {
+    opacity: 0.55;
+  }
+  60%,
+  100% {
+    opacity: 0;
+    transform: scale(26);
+  }
+}
+.chart-sounding,
+.chart-sounding-ping {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+  opacity: 0;
+}
+.chart-sounding {
+  fill: rgb(var(--contour));
+  animation: cn-sounding 9s ease-in-out infinite;
+}
+.chart-sounding-ping {
+  fill: none;
+  stroke: rgb(var(--contour));
+  stroke-width: 1.2;
+  vector-effect: non-scaling-stroke;
+  animation: cn-sounding-ping 9s ease-out infinite;
+}
+
+/* پرده دو کار دارد و هرکدام یک لایه است:
+   ۱) هاله‌ی بیضیِ بالا — دقیقاً زیرِ لاک‌آپ و ابزارها می‌نشیند تا نقشه از
+      پشتِ متن کنار برود. بدون این، قوس‌های روشن از وسطِ عنوان رد می‌شوند.
+   ۲) محوشدنِ عمودی — نقشه در کفِ سربرگ به بومِ صفحه می‌رسد.
+   لبه‌ها و پایینِ کادر دست‌نخورده می‌مانند: آنجا چیزی برای خواندن نیست. */
 .chart-margin-veil {
   position: absolute;
   inset: 0;
-  background: linear-gradient(
-    to bottom,
-    rgb(var(--canvas) / 0.55) 0%,
-    rgb(var(--canvas) / 0.8) 55%,
-    rgb(var(--canvas)) 100%
-  );
+  background:
+    radial-gradient(
+      88% 40% at 50% 15%,
+      rgb(var(--canvas) / 0.92) 0%,
+      rgb(var(--canvas) / 0.6) 52%,
+      rgb(var(--canvas) / 0) 100%
+    ),
+    linear-gradient(
+      to bottom,
+      rgb(var(--canvas) / 0.16) 0%,
+      rgb(var(--canvas) / 0.5) 52%,
+      rgb(var(--canvas) / 0.86) 76%,
+      rgb(var(--canvas)) 93%
+    );
 }
 
 /* نوار ابزار: با اسکرول بالای صفحه می‌چسبد و خطِ مویی زیرش می‌نشیند */
@@ -702,6 +811,11 @@ button.roster-row:disabled {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .chart-margin > svg,
+  .chart-margin .chart-watermark,
+  .chart-sounding,
+  .chart-sounding-ping,
+  .echo-line,
   .sounding-line,
   .sounding-dot,
   .depth-rule,
