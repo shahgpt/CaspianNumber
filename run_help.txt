@@ -1,0 +1,19 @@
+بررسی:
+
+```bash
+lsof -nP -iTCP:8899 -sTCP:LISTEN
+```
+
+توقف:
+
+```bash
+kill $(lsof -t -nP -iTCP:8899 -sTCP:LISTEN)
+```
+
+اگر نبست:
+
+```bash
+kill -9 $(lsof -t -nP -iTCP:8899 -sTCP:LISTEN)
+```
+
+برای پورت‌های دیگر (۵۱۷۳ ویت dev، ۴۱۷۳ preview) همان دستورها با عوض کردن عدد پورت کار می‌کنند.

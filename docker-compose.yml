@@ -1,0 +1,19 @@
+services:
+  app:
+    build: .
+    container_name: caspian-number
+    ports:
+      - "8899:8899"
+    volumes:
+      - app-data:/data
+    environment:
+      # ⚠️ قبل از دیپلوی عوض کنید:
+      SECRET_KEY: "${SECRET_KEY:-please-change-me}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      OPENAI_MODEL: "${OPENAI_MODEL:-gpt-4o-mini}"
+      ADMIN_USERNAME: "${ADMIN_USERNAME:-admin}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-admin123}"
+    restart: unless-stopped
+
+volumes:
+  app-data:

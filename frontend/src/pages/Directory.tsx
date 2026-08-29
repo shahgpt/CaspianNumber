@@ -1,0 +1,405 @@
+import { useEffect, useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import gsap from 'gsap'
+import { Link } from 'react-router-dom'
+import { ChevronDown, LogOut, ShieldCheck } from 'lucide-react'
+import { api } from '../lib/api'
+import { forgetSession, useSession } from '../lib/auth'
+import type { Employee } from '../lib/api'
+import PinList from '../components/PinList'
+import EmployeeAutocomplete from '../components/EmployeeAutocomplete'
+import BrandLockup from '../components/BrandLockup'
+import ThemeToggle from '../components/ThemeToggle'
+import { countTo, faDigits, prefersReducedMotion, shouldAnimate } from '../lib/motion'
+import { readPins, writePins } from '../lib/pins'
+import { CONTOURS } from './login-contours'
+
+/* قرارداد Impeccable — دنیای «نقشه‌ی عمق‌سنجی» (ادامه‌ی صفحه‌ی ورود)
+   THESIS: دفترچه، خودِ نقشه است. صفحه همان کاغذِ سفیدِ ورود می‌ماند و
+           فهرست همکاران روی یک «محور عمق» عمودی نشانه‌گذاری می‌شود.
+   FOCAL MOTION: سنجاق که زده شد، ردیف با یک فنر بینِ دو گروه پرواز می‌کند.
+   DENSITY: ردیف به‌جای کارت — عدد همان‌جا خوانده می‌شود، نه پشت یک دکمه. */
+
+const SUGGESTIONS = ['استخدام', 'شبکه', 'مالی', 'فاکتور']
+
+export default function Directory() {
+  const [q, setQ] = useState('')
+  const [query, setQuery] = useState('')
+  // نقش را سرور تأیید می‌کند؛ اینجا فقط تصمیمِ نمایش گرفته می‌شود
+  const { isAdmin } = useSession()
+
+  const { data: results, isFetching } = useQuery({
+    queryKey: ['employees', query],
+    queryFn: () =>
+      api<Employee[]>(`/api/employees?q=${encodeURIComponent(query)}&limit=30`),
+  })
+
+  const pageRef = useRef<HTMLDivElement>(null)
+  const mastheadRef = useRef<HTMLDivElement>(null)
+  const logoRef = useRef<HTMLDivElement>(null)
+  const ruleRef = useRef<SVGSVGElement>(null)
+  const subRef = useRef<HTMLParagraphElement>(null)
+  const actionsRef = useRef<HTMLDivElement>(null)
+  const barRef = useRef<HTMLDivElement>(null)
+  const countLineRef = useRef<HTMLParagraphElement>(null)
+  const rosterRef = useRef<HTMLDivElement>(null)
+  const countRef = useRef<HTMLSpanElement>(null)
+  const emptyRef = useRef<HTMLDivElement>(null)
+  const lastCount = useRef(-1)
+
+  /* سنجاق‌ها روی همین مرورگر می‌مانند — سرور از آن‌ها خبر ندارد */
+  const [pins, setPins] = useState<Set<number>>(readPins)
+
+  const browsing = query.trim() === ''
+  const rows = (results ?? []).map((emp) => ({ ...emp, pinned: pins.has(emp.id) }))
+  const isEmpty = results && results.length === 0 && !browsing
+
+  function togglePin(id: number) {
+    setPins((prev) => {
+      const next = new Set(prev)
+      if (!next.delete(id)) next.add(id)
+      writePins(next)
+      return next
+    })
+  }
+
+  /* --- لحظه‌ی امضایی: محور کشیده می‌شود و صحنه پرده برمی‌دارد.
+         عنوان اینجا حرف‌به‌حرف نمی‌آید — آن یک‌بار در صفحه‌ی ورود اجرا شد؛
+         تکرارش روی صفحه‌ای که هر روز باز می‌شود، خسته‌کننده است. --- */
+  useEffect(() => {
+    const masthead = mastheadRef.current
+    if (!masthead || !shouldAnimate()) return
+
+    const ctx = gsap.context(() => {
+      gsap
+        .timeline({ defaults: { ease: 'expo.out' } })
+        .from(logoRef.current, { opacity: 0, y: 12, duration: 0.7 }, 0.05)
+        .from(subRef.current, { opacity: 0, y: 8, duration: 0.6 }, 0.16)
+        .from(
+          actionsRef.current?.children ?? [],
+          { opacity: 0, y: 10, duration: 0.55, stagger: 0.06 },
+          0.22,
+        )
+        .from(ruleRef.current, { scaleX: 0, duration: 0.9 }, 0.3)
+        .from(
+          barRef.current,
+          {
+            opacity: 0,
+            y: 16,
+            filter: 'blur(6px)',
+            clipPath: 'inset(0% 0% 100% 0%)',
+            duration: 0.8,
+            clearProps: 'filter,clipPath',
+          },
+          0.38,
+        )
+        .from(countLineRef.current, { opacity: 0, y: 8, duration: 0.45 }, 0.58)
+    }, masthead)
+
+    return () => ctx.revert()
+  }, [])
+
+  /* --- نوار ابزار وقتی می‌چسبد، خطِ مویی زیرش می‌نشیند --- */
+  useEffect(() => {
+    const bar = barRef.current
+    if (!bar) return
+    let raf = 0
+    function onScroll() {
+      if (raf) return
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        if (bar) bar.dataset.stuck = String(bar.getBoundingClientRect().top <= 0)
+      })
+    }
+    onScroll()
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      window.removeEventListener('scroll', onScroll)
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [])
+
+  /* ردیف‌ها دیگر با GSAP پرده برنمی‌دارند: حالا Motion صاحبِ ترنسفورمِ
+     آن‌هاست تا سنجاق‌زدن ردیف را بینِ دو گروه پرواز بدهد، و دو موتورِ
+     انیمیشن روی یک گره با هم نمی‌سازند. لحظه‌ی امضاییِ فهرست همان
+     جابه‌جاییِ فنری است، نه ورودِ پلکانی. */
+
+  /* --- شمارنده‌ی نتایج --- */
+  useEffect(() => {
+    const n = results?.length ?? -1
+    if (n < 0 || !countRef.current || n === lastCount.current) return
+    countTo(countRef.current, n)
+    lastCount.current = n
+  }, [results])
+
+  /* --- حالت خالی --- */
+  useEffect(() => {
+    if (isEmpty && emptyRef.current && !prefersReducedMotion()) {
+      gsap.from(emptyRef.current, { opacity: 0, y: 10, duration: 0.5, ease: 'expo.out' })
+    }
+  }, [isEmpty, query])
+
+  /* --- راهنمای اسکرول ---
+         نگهبانی ته فهرست می‌نشیند: تا وقتی دیده نشده یعنی عمق ادامه دارد و
+         راهنما کفِ صفحه می‌ماند. حاشیه‌ی ۹۶ پیکسلی به‌اندازه‌ی قدِ خودِ راهنماست
+         تا درست پیش از رسیدن به ته، کنار برود.
+         روی فهرستِ کوتاه که صفحه اصلاً اسکرول ندارد هم راهنما نباید بیاید — پس
+         کوتاهیِ صفحه را جدا می‌سنجیم و با تغییرِ داده‌ها دوباره حساب می‌کنیم. --- */
+  useEffect(() => {
+    const page = pageRef.current
+    const roster = rosterRef.current
+    if (!page || !roster) return
+
+    let reachedEnd = false
+    function sync() {
+      const scrollable =
+        document.documentElement.scrollHeight - window.innerHeight > 24
+      page?.classList.toggle('at-end', reachedEnd || !scrollable)
+    }
+    const sentinel = document.createElement('div')
+    roster.appendChild(sentinel)
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        reachedEnd = entry.isIntersecting
+        sync()
+      },
+      { rootMargin: '96px' },
+    )
+    io.observe(sentinel)
+
+    const ro = new ResizeObserver(sync)
+    ro.observe(document.documentElement)
+    ro.observe(roster)
+    window.addEventListener('resize', sync)
+    window.addEventListener('load', sync)
+    sync()
+
+    return () => {
+      io.disconnect()
+      ro.disconnect()
+      window.removeEventListener('resize', sync)
+      sentinel.remove()
+    }
+  }, [])
+
+  /* یک کادرِ دید پایین‌تر — کمی هم‌پوشانی می‌ماند تا رشته‌ی نگاه پاره نشود */
+  function scrollDown() {
+    window.scrollBy({
+      top: window.innerHeight * 0.82,
+      behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+    })
+  }
+
+  function search(text?: string) {
+    const t = text ?? q
+    setQ(t)
+    setQuery(t)
+  }
+
+  function changeSearchText(text: string) {
+    setQ(text)
+    if (text.trim() === '') setQuery('')
+  }
+
+  function logout() {
+    forgetSession()
+    window.location.href = '/'
+  }
+
+  return (
+    <div className="relative min-h-dvh bg-[rgb(var(--canvas))]">
+      {/* حاشیه‌ی نقشه — همان خطوط ترازِ صفحه‌ی ورود، ایستا و بسیار محو */}
+      <div className="chart-margin" aria-hidden="true">
+        <svg viewBox="0 0 1200 800" preserveAspectRatio="xMidYMax slice" className="h-full w-full">
+          {CONTOURS.slice(4).map((d, i) => (
+            <path key={i} d={d} className="sounding-line" />
+          ))}
+        </svg>
+        {/* ردپای برند در مقیاسِ نقشه — بریده به لبه‌ی حاشیه، زیرِ همان
+            پرده‌ای که خطوط تراز را محو می‌کند */}
+        <img
+          src="/brand-mark.png"
+          alt=""
+          aria-hidden="true"
+          width={384}
+          height={384}
+          loading="lazy"
+          decoding="async"
+          className="chart-watermark brand-mark"
+        />
+        <div className="chart-margin-veil" />
+      </div>
+
+      <div ref={pageRef} className="page-bottom relative mx-auto w-full max-w-6xl px-5 sm:px-8">
+        {/* سربرگ برند */}
+        <div ref={mastheadRef} className="pt-7 sm:pt-10">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0 sm:order-1">
+              <BrandLockup ref={logoRef} variant="masthead" />
+              <p ref={subRef} className="mt-2.5 text-[13.5px] text-ink-500">
+                دفترچه تلفن سازمانی
+              </p>
+            </div>
+
+            {/* روی موبایل این ردیف تمام‌عرض است: «پنل مدیریت» لبه‌ی آغاز
+                می‌ماند و «خروج/تم» با ms-auto به لبه‌ی پایان می‌روند.
+                روی دسکتاپ ردیف به‌اندازه‌ی محتواست، پس ms-auto اثری ندارد
+                و همه مثل قبل کنار هم می‌نشینند. */}
+            <div ref={actionsRef} className="flex shrink-0 items-center gap-1.5 sm:order-2">
+              {isAdmin && (
+                <Link to="/admin" className="masthead-action">
+                  <ShieldCheck strokeWidth={1.8} className="h-[17px] w-[17px]" aria-hidden="true" />
+                  <span>پنل مدیریت</span>
+                </Link>
+              )}
+              {/* اینجا دیگر «ورود» لازم نیست: پشتِ گارد، همیشه کسی وارد
+                  شده است. تنها راهِ بیرون رفتن می‌ماند. */}
+              <div className="ms-auto flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={logout}
+                  className="masthead-action masthead-action--exit"
+                >
+                  <LogOut strokeWidth={1.8} className="h-[17px] w-[17px]" aria-hidden="true" />
+                  <span>خروج</span>
+                </button>
+                <ThemeToggle />
+              </div>
+            </div>
+          </div>
+
+          {/* مقیاسِ نقشه — مرزِ عنوان با ابزار، امضای مشترک با صفحه‌ی ورود */}
+          <svg
+            ref={ruleRef}
+            viewBox="0 0 300 12"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+            className="depth-rule mt-6 block h-3 w-full text-sea-600 dark:text-sea-400"
+          >
+            <line x1="0" y1="6" x2="300" y2="6" stroke="currentColor" strokeOpacity="0.3" strokeWidth="1" />
+            {[0, 75, 150, 225, 300].map((x) => (
+              <line
+                key={x}
+                x1={x}
+                y1={x === 150 ? 1.5 : 3}
+                x2={x}
+                y2={x === 150 ? 10.5 : 9}
+                stroke="currentColor"
+                strokeOpacity={x === 150 ? 0.85 : 0.4}
+                strokeWidth="1"
+              />
+            ))}
+          </svg>
+        </div>
+
+        {/* ابزار جستجو — با اسکرول بالای صفحه می‌چسبد */}
+        <div ref={barRef} className="search-bar">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              search()
+            }}
+            role="search"
+          >
+            {/* پیشنهادها پیش از Enter بالا می‌آیند؛ Enter بدون انتخاب
+                همان جستجوی متنِ خام است، مثل قبل */}
+            <EmployeeAutocomplete
+              value={q}
+              onValueChange={changeSearchText}
+              onSearch={search}
+              busy={isFetching}
+            />
+          </form>
+
+          <div className="mt-2.5 flex flex-wrap items-center gap-2">
+            {SUGGESTIONS.map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => search(query === s ? '' : s)}
+                aria-pressed={query === s}
+                className={`rounded-full px-4 py-2 text-[13px] transition-colors duration-200 ${
+                  query === s
+                    ? 'bg-sea-500 font-medium text-white dark:bg-sea-400 dark:text-deep-950'
+                    : 'bg-tint text-tide ring-1 ring-sand-200 hover:bg-sand-100'
+                }`}
+              >
+                {s}
+              </button>
+            ))}
+
+            {!browsing && !SUGGESTIONS.includes(query) && (
+              <button
+                type="button"
+                onClick={() => search('')}
+                className="rounded-full px-3 py-1.5 text-[12px] text-ink-400 underline decoration-sand-300 underline-offset-4 transition-colors duration-200 hover:text-ink-700"
+              >
+                پاک کردن جستجو
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* برچسبِ چارت — وقتی نتیجه‌ای نیست، حالتِ خالی خودش گویاست */}
+        {!isEmpty && (
+          <p
+            ref={countLineRef}
+            className="mt-7 mb-1.5 flex items-baseline gap-1.5 ps-8 text-[12px] text-ink-400"
+          >
+            <span ref={countRef} className="tnum font-bold text-tide">
+              {faDigits(rows.length)}
+            </span>
+            <span>{browsing ? 'همکار در فهرست' : 'نتیجه برای جستجوی شما'}</span>
+          </p>
+        )}
+
+        {/* فهرست همکاران */}
+        <main ref={rosterRef} className="roster">
+          <PinList items={rows} onToggle={(emp) => togglePin(emp.id)} />
+
+          {isEmpty && (
+            <div ref={emptyRef} className="py-16 text-center">
+              {/* یک وصله‌ی خالی از نقشه: خطوط تراز هست، نشانه‌ای نیست */}
+              <svg
+                viewBox="0 0 96 56"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.25"
+                strokeLinecap="round"
+                aria-hidden="true"
+                className="mx-auto mb-5 h-14 w-24 text-sea-600 dark:text-sea-400"
+              >
+                <path d="M4 42C18 30 30 40 44 30S72 12 92 20" strokeOpacity="0.45" />
+                <path d="M4 30C20 18 32 28 46 18S74 2 92 9" strokeOpacity="0.28" />
+                <path d="M4 52C16 43 30 51 44 42S70 26 92 33" strokeOpacity="0.28" />
+              </svg>
+              <p className="font-bold text-ink-700">در این عمق چیزی ثبت نشده.</p>
+              <p className="mx-auto mt-2 max-w-[40ch] text-[13.5px] leading-7 text-ink-500">
+                با بخشی از نام خانوادگی، نام واحد، یا واژه‌ای از شرح کار جستجو کنید.
+              </p>
+              <button
+                type="button"
+                onClick={() => search('')}
+                className="mt-5 rounded-xl bg-deep-900 px-4 py-2.5 text-[13px] font-bold text-white transition-[background-color,transform] duration-200 hover:bg-deep-800 active:scale-[.98] dark:bg-sea-500 dark:text-deep-950 dark:hover:bg-sea-400"
+              >
+                نمایش همه‌ی همکاران
+              </button>
+            </div>
+          )}
+        </main>
+
+        {/* راهنمای اسکرول — کفِ کادرِ دید می‌ماند تا ته فهرست بیاید */}
+        <div className="scroll-cue" aria-hidden="true">
+          <button
+            type="button"
+            tabIndex={-1}
+            onClick={scrollDown}
+            className="scroll-cue-button"
+          >
+            <ChevronDown strokeWidth={2} className="scroll-cue-chevron h-[18px] w-[18px]" />
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
