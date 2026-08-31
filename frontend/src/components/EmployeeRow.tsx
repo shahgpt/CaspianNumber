@@ -106,82 +106,84 @@ export default function EmployeeRow({ emp, pinned = false, onTogglePin, layoutTr
         transition={layoutTransition}
         className="roster-item"
       >
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          disabled={!hasNumber}
-          aria-haspopup="dialog"
-          aria-label={`شماره‌های ${emp.full_name}`}
-          className="roster-row group"
-        >
-          <span className="min-w-0 flex-1 text-start md:w-[22rem] md:flex-none lg:w-[26rem]">
-            <span className="block truncate text-[16px] font-bold leading-tight text-ink-900">
-              {emp.full_name}
-            </span>
-            {meta && (
-              <span className="mt-1 block truncate text-[13px] leading-tight text-ink-500 md:hidden">
-                {meta}
+        <div className="roster-reveal">
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            disabled={!hasNumber}
+            aria-haspopup="dialog"
+            aria-label={`شماره‌های ${emp.full_name}`}
+            className="roster-row group"
+          >
+            <span className="min-w-0 flex-1 text-start md:w-[22rem] md:flex-none lg:w-[26rem]">
+              <span className="block truncate text-[16px] font-bold leading-tight text-ink-900">
+                {emp.full_name}
               </span>
-            )}
-            {emp.job_title && (
-              <span className="mt-1 hidden truncate text-[13px] leading-tight text-ink-500 md:block">
-                {emp.job_title}
-              </span>
-            )}
-          </span>
-
-          {/* ستونِ واحد — فقط روی صفحه‌ی پهن؛ فضای اضافه را همین ستون می‌گیرد
-              تا وسطِ ردیف خالی نماند و عددها لبه‌ی چارت بمانند */}
-          <span className="hidden min-w-0 flex-1 truncate text-[13.5px] text-ink-500 md:block">
-            {unit || <span className="text-ink-300">—</span>}
-          </span>
-
-          {/* ستونِ عدد — لبه‌ی پایانیِ چارت، اعداد روی یک خط تراز.
-              آیکون جای ثابت دارد ولی فقط در هاور/فوکوس دیده می‌شود تا
-              تکرارِ یک گلیف در سی ردیف، فهرست را شلوغ نکند. */}
-          <span className="flex shrink-0 items-center gap-2">
-            <Phone
-              strokeWidth={1.8}
-              aria-hidden="true"
-              className="h-4 w-4 text-sea-600 opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100 group-disabled:opacity-0 dark:text-sea-400"
-            />
-            <span className="w-[76px] text-end">
-              {extension ? (
-                <span dir="ltr" className="tnum text-[17px] font-bold leading-none text-tide">
-                  {faDigits(extension)}
+              {meta && (
+                <span className="mt-1 block truncate text-[13px] leading-tight text-ink-500 md:hidden">
+                  {meta}
                 </span>
-              ) : direct ? (
-                <span className="text-[12.5px] leading-none text-ink-400">مستقیم</span>
-              ) : (
-                <span aria-hidden="true" className="text-[13px] leading-none text-ink-300">
-                  —
+              )}
+              {emp.job_title && (
+                <span className="mt-1 hidden truncate text-[13px] leading-tight text-ink-500 md:block">
+                  {emp.job_title}
                 </span>
               )}
             </span>
-          </span>
 
-        </button>
+            {/* ستونِ واحد — فقط روی صفحه‌ی پهن؛ فضای اضافه را همین ستون می‌گیرد
+                تا وسطِ ردیف خالی نماند و عددها لبه‌ی چارت بمانند */}
+            <span className="hidden min-w-0 flex-1 truncate text-[13.5px] text-ink-500 md:block">
+              {unit || <span className="text-ink-300">—</span>}
+            </span>
 
-        {/* سنجاق — بیرونِ دکمه‌ی ردیف می‌ماند چون دکمه در دکمه معتبر نیست.
-            پین‌شده همیشه پیداست؛ پین‌نشده فقط زیرِ نشانگر یا فوکوس، تا
-            تکرارِ یک گلیف در سی ردیف فهرست را شلوغ نکند. */}
-        {onTogglePin && (
-          <button
-            type="button"
-            onClick={onTogglePin}
-            aria-pressed={pinned}
-            aria-label={pinned ? `برداشتن سنجاق ${emp.full_name}` : `سنجاق کردن ${emp.full_name}`}
-            className="roster-pin"
-            data-pinned={pinned || undefined}
-          >
-            <Pin
-              strokeWidth={1.8}
-              aria-hidden="true"
-              className="h-4 w-4"
-              fill={pinned ? 'currentColor' : 'none'}
-            />
+            {/* ستونِ عدد — لبه‌ی پایانیِ چارت، اعداد روی یک خط تراز.
+                آیکون جای ثابت دارد ولی فقط در هاور/فوکوس دیده می‌شود تا
+                تکرارِ یک گلیف در سی ردیف، فهرست را شلوغ نکند. */}
+            <span className="flex shrink-0 items-center gap-2">
+              <Phone
+                strokeWidth={1.8}
+                aria-hidden="true"
+                className="h-4 w-4 text-sea-600 opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100 group-disabled:opacity-0 dark:text-sea-400"
+              />
+              <span className="w-[76px] text-end">
+                {extension ? (
+                  <span dir="ltr" className="tnum text-[17px] font-bold leading-none text-tide">
+                    {faDigits(extension)}
+                  </span>
+                ) : direct ? (
+                  <span className="text-[12.5px] leading-none text-ink-400">مستقیم</span>
+                ) : (
+                  <span aria-hidden="true" className="text-[13px] leading-none text-ink-300">
+                    —
+                  </span>
+                )}
+              </span>
+            </span>
+
           </button>
-        )}
+
+          {/* سنجاق — بیرونِ دکمه‌ی ردیف می‌ماند چون دکمه در دکمه معتبر نیست.
+              پین‌شده همیشه پیداست؛ پین‌نشده فقط زیرِ نشانگر یا فوکوس، تا
+              تکرارِ یک گلیف در سی ردیف فهرست را شلوغ نکند. */}
+          {onTogglePin && (
+            <button
+              type="button"
+              onClick={onTogglePin}
+              aria-pressed={pinned}
+              aria-label={pinned ? `برداشتن سنجاق ${emp.full_name}` : `سنجاق کردن ${emp.full_name}`}
+              className="roster-pin"
+              data-pinned={pinned || undefined}
+            >
+              <Pin
+                strokeWidth={1.8}
+                aria-hidden="true"
+                className="h-4 w-4"
+                fill={pinned ? 'currentColor' : 'none'}
+              />
+            </button>
+          )}
+        </div>
       </motion.li>
 
       {/* شیت روی body سوار می‌شود، نه داخلِ <ul> فهرست: آن ul درونِ یک

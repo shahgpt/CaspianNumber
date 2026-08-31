@@ -10,7 +10,8 @@ import PinList from '../components/PinList'
 import EmployeeAutocomplete from '../components/EmployeeAutocomplete'
 import BrandLockup from '../components/BrandLockup'
 import ThemeToggle from '../components/ThemeToggle'
-import { countTo, faDigits, shouldAnimate } from '../lib/motion'
+import { countTo, createRevealer, faDigits, shouldAnimate } from '../lib/motion'
+import type { Revealer } from '../lib/motion'
 import { readPins, writePins } from '../lib/pins'
 import { CONTOURS, SOUNDINGS } from './login-contours'
 
@@ -58,6 +59,7 @@ export default function Directory() {
   const countRef = useRef<HTMLSpanElement>(null)
   const emptyRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
+  const revealerRef = useRef<Revealer | null>(null)
   const lastCount = useRef(-1)
   const [atEnd, setAtEnd] = useState(false)
 
@@ -133,10 +135,36 @@ export default function Directory() {
     }
   }, [])
 
-  /* ردیف‌ها دیگر با GSAP پرده برنمی‌دارند: حالا Motion صاحبِ ترنسفورمِ
-     آن‌هاست تا سنجاق‌زدن ردیف را بینِ دو گروه پرواز بدهد، و دو موتورِ
-     انیمیشن روی یک گره با هم نمی‌سازند. لحظه‌ی امضاییِ فهرست همان
-     جابه‌جاییِ فنری است، نه ورودِ پلکانی. */
+  /* --- ورودِ پلکانیِ ردیف‌ها ---
+         ترنسفورمِ خودِ <li> دستِ Motion است تا سنجاق‌زدن ردیف را بینِ دو
+         گروه پرواز بدهد؛ پس پرده‌برداری روی لایه‌ی داخلیِ .roster-reveal
+         می‌نشیند و دو موتور به هم نمی‌خورند. یک ناظرِ ماندگار، مثل پنل
+         مدیریت. تأخیرِ دسته‌ی اول پشتِ توالیِ سربرگ می‌ماند. --- */
+  useEffect(() => {
+    const roster = rosterRef.current
+    if (!roster) return
+    const revealer = createRevealer(roster, '.roster-reveal', {
+      y: 12,
+      duration: 0.55,
+      each: 0.04,
+      maxStagger: 0.34,
+      firstBatchDelay: 0.6,
+    })
+    revealerRef.current = revealer
+    revealer.scan()
+    return () => {
+      revealer.destroy()
+      revealerRef.current = null
+    }
+  }, [])
+
+  /* فقط ردیف‌های تازه. وابستگی طول است نه خودِ `results` — آن آرایه هر
+     رندر از نو ساخته می‌شود. سنجاق که خورد طول عوض نمی‌شود، پس ردیفی که
+     در گروهِ دیگر از نو ساخته شده پنهان نمی‌شود و هم‌زمان با پروازِ
+     Motion یک‌بار دیگر پرده نمی‌زند. */
+  useEffect(() => {
+    revealerRef.current?.scan()
+  }, [results?.length, query])
 
   /* --- شمارنده‌ی نتایج --- */
   useEffect(() => {
