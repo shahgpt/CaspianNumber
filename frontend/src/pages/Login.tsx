@@ -4,7 +4,7 @@ import gsap from 'gsap'
 import { AlertCircle, ArrowLeft, Eye, EyeOff, KeyRound, ShieldCheck, User } from 'lucide-react'
 import { api, setToken } from '../lib/api'
 import { rememberSession } from '../lib/auth'
-import { prefersReducedMotion, shouldAnimate } from '../lib/motion'
+import { shouldAnimate } from '../lib/motion'
 import { TextAnimate } from '@/registry/magicui/text-animate'
 import BrandLockup from '../components/BrandLockup'
 import ThemeToggle from '../components/ThemeToggle'
@@ -159,7 +159,7 @@ export default function Login() {
 
   /* --- خطا: کارت تکان می‌خورد و پیام می‌نشیند --- */
   useEffect(() => {
-    if (!error || prefersReducedMotion()) return
+    if (!error) return
     gsap.fromTo(
       formRef.current,
       { x: -9 },
@@ -172,7 +172,7 @@ export default function Login() {
   useEffect(() => {
     const sweep = sweepRef.current
     if (!sweep) return
-    if (!loading || prefersReducedMotion()) {
+    if (!loading) {
       gsap.killTweensOf(sweep)
       gsap.set(sweep, { xPercent: 0, opacity: 0 })
       return

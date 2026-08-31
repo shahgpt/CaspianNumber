@@ -1,10 +1,5 @@
 import gsap from 'gsap'
 
-/** آیا کاربر کاهش حرکت خواسته؟ */
-export function prefersReducedMotion(): boolean {
-  return typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
-}
-
 /**
  * آیا اصلاً باید انیمیشن اجرا شود؟
  *
@@ -14,13 +9,12 @@ export function prefersReducedMotion(): boolean {
  * کامل نشان می‌دهیم؛ محتوا هرگز نباید گروگانِ موشن باشد.
  */
 export function shouldAnimate(): boolean {
-  if (prefersReducedMotion()) return false
   return typeof document === 'undefined' || !document.hidden
 }
 
 /**
  * شمارنده‌ی عدد نتایج — از صفر تا تعداد یافته‌ها.
- * reduced-motion → همان عدد نهایی بلافاصله.
+ * تبِ پنهان → همان عدد نهایی بلافاصله.
  */
 export function countTo(el: HTMLElement, value: number, duration = 0.7) {
   if (!shouldAnimate() || !Number.isFinite(value)) {
@@ -75,7 +69,7 @@ export function createRevealer(
 ): Revealer {
   const { y = 14, duration = 0.62, each = 0.05, maxStagger = 0.38, firstBatchDelay = 0 } = opts
   const done = 'cnRevealed'
-  const reduced = !shouldAnimate() || typeof IntersectionObserver === 'undefined'
+  const instant = !shouldAnimate() || typeof IntersectionObserver === 'undefined'
 
   // IntersectionObserver ردیف‌های یک صفحه را در چند فراخوانِ پشت‌سرهم تحویل
   // می‌دهد، نه یک‌جا. پس «تأخیرِ دسته‌ی اول» با شمارنده جواب نمی‌دهد؛ یک
@@ -90,7 +84,7 @@ export function createRevealer(
     if (targets.length) gsap.to(targets, vars)
   }
 
-  const io = reduced
+  const io = instant
     ? null
     : new IntersectionObserver(
         (entries) => {
@@ -134,7 +128,7 @@ export function createRevealer(
     if (!fresh.length) return
 
     if (!io) {
-      // کاهشِ حرکت: محتوا از همان اول پیداست، فقط علامت می‌خورد
+      // بدون ناظر: محتوا از همان اول پیداست، فقط علامت می‌خورد
       fresh.forEach((el) => {
         el.dataset[done] = '1'
       })

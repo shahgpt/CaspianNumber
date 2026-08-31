@@ -10,7 +10,7 @@ import PinList from '../components/PinList'
 import EmployeeAutocomplete from '../components/EmployeeAutocomplete'
 import BrandLockup from '../components/BrandLockup'
 import ThemeToggle from '../components/ThemeToggle'
-import { countTo, faDigits, prefersReducedMotion, shouldAnimate } from '../lib/motion'
+import { countTo, faDigits, shouldAnimate } from '../lib/motion'
 import { readPins, writePins } from '../lib/pins'
 import { CONTOURS, SOUNDINGS } from './login-contours'
 
@@ -148,7 +148,7 @@ export default function Directory() {
 
   /* --- حالت خالی --- */
   useEffect(() => {
-    if (isEmpty && emptyRef.current && !prefersReducedMotion()) {
+    if (isEmpty && emptyRef.current) {
       gsap.from(emptyRef.current, { opacity: 0, y: 10, duration: 0.5, ease: 'expo.out' })
     }
   }, [isEmpty, query])
@@ -165,7 +165,7 @@ export default function Directory() {
     // پس‌زمینه است — GSAP خودش در تبِ پنهان می‌ایستد و با برگشتِ کاربر
     // ادامه می‌دهد. با shouldAnimate() هرکس صفحه را در تبِ پس‌زمینه باز
     // می‌کرد، پژواک را دیگر هرگز نمی‌دید.
-    if (!chart || prefersReducedMotion()) return
+    if (!chart) return
     const lines = Array.from(chart.querySelectorAll<SVGPathElement>('.echo-line'))
     if (!lines.length) return
 
@@ -202,7 +202,7 @@ export default function Directory() {
          روی لمس، پارالاکسِ اشاره‌گر معنا ندارد؛ فقط اسکرول می‌ماند. */
   useEffect(() => {
     const chart = chartRef.current
-    if (!chart || prefersReducedMotion()) return
+    if (!chart) return
 
     const fine = window.matchMedia('(pointer: fine)').matches
     let raf = 0
@@ -297,7 +297,7 @@ export default function Directory() {
   function scrollDown() {
     window.scrollBy({
       top: window.innerHeight * 0.82,
-      behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+      behavior: 'smooth',
     })
   }
 

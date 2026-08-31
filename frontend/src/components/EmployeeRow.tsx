@@ -6,7 +6,7 @@ import type { Transition } from 'motion/react'
 import { Phone, Pin, X } from 'lucide-react'
 import type { Employee } from '../lib/api'
 import { toEnDigits } from '../lib/api'
-import { faDigits, prefersReducedMotion } from '../lib/motion'
+import { faDigits } from '../lib/motion'
 
 /* قرارداد Impeccable — دنیای «نقشه‌ی عمق‌سنجی»
    هر همکار یک «نشانه‌ی عمق» روی محورِ کنارِ لیست است، نه یک کارت.
@@ -52,12 +52,6 @@ export default function EmployeeRow({ emp, pinned = false, onTogglePin, layoutTr
     document.body.style.overflow = 'hidden'
     optionRefs.current[0]?.focus({ preventScroll: true })
 
-    if (prefersReducedMotion())
-      return () => {
-        document.removeEventListener('keydown', onKey)
-        document.body.style.overflow = ''
-      }
-
     const ctx = gsap.context(() => {
       gsap
         .timeline({ defaults: { ease: 'expo.out' } })
@@ -86,7 +80,7 @@ export default function EmployeeRow({ emp, pinned = false, onTogglePin, layoutTr
   function close() {
     const panel = panelRef.current
     const dlg = dialogRef.current
-    if (!panel || !dlg || prefersReducedMotion()) {
+    if (!panel || !dlg) {
       setOpen(false)
       return
     }

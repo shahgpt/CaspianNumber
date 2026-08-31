@@ -1,7 +1,6 @@
 import { useLayoutEffect, useMemo, useRef } from 'react'
 import type { ElementType, JSX } from 'react'
 import gsap from 'gsap'
-import { prefersReducedMotion } from '../../lib/motion'
 
 /**
  * TextAnimate — همان API کامپوننت MagicUI، اما موتورش GSAP است
@@ -9,7 +8,7 @@ import { prefersReducedMotion } from '../../lib/motion'
  *
  *   <TextAnimate animation="slideLeft" by="character">Caspian Number</TextAnimate>
  *
- * بدون JS یا با prefers-reduced-motion متن از همان ابتدا کامل و خواناست.
+ * بدون JS متن از همان ابتدا کامل و خواناست.
  */
 
 export type AnimationVariant =
@@ -95,7 +94,7 @@ export function TextAnimate({
 
   useLayoutEffect(() => {
     const host = hostRef.current
-    if (!host || prefersReducedMotion()) return
+    if (!host) return
 
     const parts = host.querySelectorAll<HTMLElement>('[data-ta-segment]')
     if (!parts.length) return

@@ -950,48 +950,6 @@ button.roster-row:disabled {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .chart-margin > svg,
-  .chart-margin .chart-watermark,
-  .chart-sounding,
-  .chart-sounding-ping,
-  .echo-line,
-  .sounding-line,
-  .sounding-dot,
-  .depth-rule,
-  .pick,
-  .pick::after,
-  .ta-char {
-    animation: none !important;
-    transition: none !important;
-  }
-  .search-spinner {
-    animation-duration: 2s;
-  }
-  .mic-button--live::after {
-    animation: none;
-    box-shadow: 0 0 0 3px rgb(var(--sea-500) / 0.35);
-  }
-  .roster-row {
-    transition-property: background-color, opacity;
-  }
-  .scroll-cue-chevron {
-    animation: none;
-  }
-  .roster-status-line path {
-    animation: none;
-    stroke-dasharray: none;
-    opacity: 0.6;
-  }
-  .brand-breathe {
-    animation: none;
-    opacity: 0.85;
-  }
-  .suggest-popup {
-    animation: none !important;
-  }
-}
-
 /* iOS زیر ۱۶px روی فوکوسِ فیلد زوم می‌کند و صفحه را جابه‌جا می‌اندازد. */
 @media (max-width: 767px) {
   input:not([type='checkbox']):not([type='radio']),

@@ -9,7 +9,7 @@ import { forgetSession } from '../lib/auth'
 import BrandLockup from '../components/BrandLockup'
 import ThemeToggle from '../components/ThemeToggle'
 import type { Employee } from '../lib/api'
-import { createRevealer, faDigits, prefersReducedMotion, shouldAnimate } from '../lib/motion'
+import { createRevealer, faDigits, shouldAnimate } from '../lib/motion'
 import type { Revealer } from '../lib/motion'
 import { CONTOURS } from './login-contours'
 import {
@@ -291,8 +291,8 @@ export default function Admin() {
       const active = nav?.querySelector<HTMLButtonElement>(`[data-tab="${tab}"]`)
       if (!active || !line) return
       const to = { x: active.offsetLeft, width: active.offsetWidth, opacity: 1 }
-      // بارِ اول، تغییرِ اندازه، و حالتِ کاهشِ حرکت: بدون لغزش، سرِ جای درست
-      if (!animate || !placed.current || prefersReducedMotion()) {
+      // بارِ اول و تغییرِ اندازه: بدون لغزش، سرِ جای درست
+      if (!animate || !placed.current) {
         placed.current = true
         gsap.set(line, to)
         return
@@ -347,7 +347,7 @@ export default function Admin() {
     switched.current = true
     // StrictMode افکت را دوبار اجرا می‌کند؛ پرچم باید سرِ جایش برگردد،
     // وگرنه محتوا هم‌زمان با توالیِ ورود یک‌بار دیگر پرده می‌زند.
-    if (!content || !wasSwitched || prefersReducedMotion()) {
+    if (!content || !wasSwitched) {
       return () => {
         switched.current = wasSwitched
       }
@@ -392,7 +392,7 @@ export default function Admin() {
 
   // بنر اعلان
   useEffect(() => {
-    if (!notice || !noticeRef.current || prefersReducedMotion()) return
+    if (!notice || !noticeRef.current) return
     gsap.from(noticeRef.current, { opacity: 0, y: -10, duration: 0.35, ease: 'expo.out' })
   }, [notice])
 
@@ -402,7 +402,7 @@ export default function Admin() {
   const modalOpen = editing !== null
   useEffect(() => {
     if (!modalOpen) return
-    if (!prefersReducedMotion() && overlayRef.current && sheetRef.current) {
+    if (overlayRef.current && sheetRef.current) {
       gsap.from(overlayRef.current, { opacity: 0, duration: 0.32 })
       gsap.from(sheetRef.current, {
         y: 40,
@@ -568,7 +568,7 @@ export default function Admin() {
 
   useEffect(() => {
     if (!confirmBulk) return
-    if (!prefersReducedMotion() && confirmRef.current) {
+    if (confirmRef.current) {
       gsap.from(confirmRef.current, {
         y: 32,
         scale: 0.97,

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from 'motion/react'
+import { AnimatePresence, LayoutGroup, motion } from 'motion/react'
 import type { HTMLMotionProps, Transition } from 'motion/react'
 import type { Employee } from '../lib/api'
 import EmployeeRow from './EmployeeRow'
@@ -47,11 +47,9 @@ export default function PinList({
   onToggle,
 }: PinListProps) {
   const [togglingGroup, setTogglingGroup] = useState<'pinned' | 'unpinned' | null>(null)
-  const reduced = useReducedMotion()
 
   const pinned = items.filter((e) => e.pinned)
   const unpinned = items.filter((e) => !e.pinned)
-  const move: Transition = reduced ? { duration: 0 } : transition
 
   function toggle(item: PinListItem) {
     setTogglingGroup(item.pinned ? 'pinned' : 'unpinned')
@@ -70,7 +68,7 @@ export default function PinList({
               emp={emp}
               pinned={emp.pinned}
               onTogglePin={() => toggle(emp)}
-              layoutTransition={move}
+              layoutTransition={transition}
             />
           ))}
         </ul>

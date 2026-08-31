@@ -3,7 +3,6 @@ import { Moon, Sun } from 'lucide-react'
 import gsap from 'gsap'
 import { getTheme, onThemeChange, toggleTheme } from '../lib/theme'
 import type { Theme } from '../lib/theme'
-import { prefersReducedMotion } from '../lib/motion'
 
 type Props = {
   /** روی سطح تیره (هدر دفترچه) رنگ‌ها معکوس می‌شوند */
@@ -29,7 +28,7 @@ export default function ThemeToggle({ onDark = false, className = '' }: Props) {
     const outgoing = theme === 'dark' ? moonRef.current : sunRef.current
     if (!incoming || !outgoing) return
 
-    if (first.current || prefersReducedMotion()) {
+    if (first.current) {
       first.current = false
       gsap.set(incoming, { autoAlpha: 1, rotate: 0, scale: 1 })
       gsap.set(outgoing, { autoAlpha: 0, rotate: theme === 'dark' ? -70 : 70, scale: 0.5 })
