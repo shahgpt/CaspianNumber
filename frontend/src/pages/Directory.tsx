@@ -53,6 +53,7 @@ export default function Directory() {
   const ruleRef = useRef<SVGSVGElement>(null)
   const subRef = useRef<HTMLParagraphElement>(null)
   const actionsRef = useRef<HTMLDivElement>(null)
+  const adminRef = useRef<HTMLAnchorElement>(null)
   const barRef = useRef<HTMLDivElement>(null)
   const countLineRef = useRef<HTMLParagraphElement>(null)
   const rosterRef = useRef<HTMLDivElement>(null)
@@ -114,6 +115,20 @@ export default function Directory() {
 
     return () => ctx.revert()
   }, [])
+
+  /* --- دکمه‌ی پنل مدیریت ---
+         نقش را سرور می‌گوید، پس این دکمه دیرتر از بقیه‌ی سربرگ به دنیا
+         می‌آید و توالیِ بالا دیگر تمام شده است. ورودِ خودش را جدا
+         می‌گیرد، با همان وزن و فاصله‌ی بقیه‌ی ابزارها. --- */
+  useEffect(() => {
+    const link = adminRef.current
+    if (!isAdmin || !link || !shouldAnimate()) return
+    const tween = gsap.from(link, { opacity: 0, y: 10, duration: 0.55, ease: 'expo.out' })
+    return () => {
+      tween.kill()
+      gsap.set(link, { clearProps: 'transform,opacity' })
+    }
+  }, [isAdmin])
 
   /* --- نوار ابزار وقتی می‌چسبد، خطِ مویی زیرش می‌نشیند --- */
   useEffect(() => {
@@ -409,7 +424,7 @@ export default function Directory() {
                 و همه مثل قبل کنار هم می‌نشینند. */}
             <div ref={actionsRef} className="flex shrink-0 items-center gap-1.5 sm:order-2">
               {isAdmin && (
-                <Link to="/admin" className="masthead-action">
+                <Link ref={adminRef} to="/admin" className="masthead-action">
                   <ShieldCheck strokeWidth={1.8} className="h-[17px] w-[17px]" aria-hidden="true" />
                   <span>پنل مدیریت</span>
                 </Link>
