@@ -27,13 +27,23 @@ def _digits(s: str) -> str:
 def list_employees(
     q: str = "",
     limit: int = 30,
+    offset: int = 0,
     db: Session = Depends(get_db),
 ):
     from ..search import search_employees
 
+    limit = max(1, min(limit, 100))
+    offset = max(0, offset)
+
     if q.strip():
-        return search_employees(db, q, limit=limit)
-    return db.query(Employee).order_by(Employee.last_name).limit(limit).all()
+        return search_employees(db, q, limit=limit, offset=offset)
+    return (
+        db.query(Employee)
+        .order_by(Employee.last_name, Employee.id)
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
 
 
 @router.get("/{emp_id}/vcard")

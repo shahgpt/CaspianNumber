@@ -56,6 +56,15 @@ HEADER_MAP = {
 # columns that identify a row for upsert purposes
 KEY_FIELDS = ("email", "extension", "direct_number", "latin_name")
 
+# ستون‌هایی که بدون آن‌ها سطر پذیرفته نمی‌شود
+REQUIRED_FIELDS = {
+    "first_name": "نام",
+    "last_name": "نام خانوادگی",
+    "department": "واحد",
+    "job_title": "سمت",
+    "extension": "داخلی",
+}
+
 
 def _cell_str(v) -> str:
     if v is None:
@@ -214,8 +223,10 @@ def apply_import(db: Session, records: list[dict], actor) -> dict:
     for i, rec in enumerate(records, start=2):  # excel row numbers (header=row1)
         try:
             name = " ".join(x for x in [rec.get("first_name", ""), rec.get("last_name", "")] if x)
-            if not any(rec.get(f, "") for f in ("direct_number", "email", "extension")) and not name.strip():
+            missing = [label for f, label in REQUIRED_FIELDS.items() if not (rec.get(f) or "").strip()]
+            if missing:
                 skipped_n += 1
+                errors.append(f"سطر {i}: ستون‌های اجباری خالی است: {'، '.join(missing)}")
                 continue
 
             emp = _find_existing(db, rec)

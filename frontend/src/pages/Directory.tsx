@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useInfiniteQuery } from '@tanstack/react-query'
 import gsap from 'gsap'
 import { Link } from 'react-router-dom'
 import { ChevronDown, LogOut, ShieldCheck } from 'lucide-react'
@@ -21,6 +21,7 @@ import { CONTOURS, SOUNDINGS } from './login-contours'
    DENSITY: ردیف به‌جای کارت — عدد همان‌جا خوانده می‌شود، نه پشت یک دکمه. */
 
 const SUGGESTIONS = ['استخدام', 'شبکه', 'مالی', 'فاکتور']
+const PAGE = 30
 
 export default function Directory() {
   const [q, setQ] = useState('')
@@ -28,11 +29,21 @@ export default function Directory() {
   // نقش را سرور تأیید می‌کند؛ اینجا فقط تصمیمِ نمایش گرفته می‌شود
   const { isAdmin } = useSession()
 
-  const { data: results, isFetching } = useQuery({
-    queryKey: ['employees', query],
-    queryFn: () =>
-      api<Employee[]>(`/api/employees?q=${encodeURIComponent(query)}&limit=30`),
-  })
+  /* فهرست صفحه‌صفحه پایین می‌آید: هر بار که ته فهرست به کادرِ دید نزدیک
+     می‌شود، یک تراز عمیق‌تر خوانده می‌شود. صفحه‌ی ناقص یعنی ته رسیده‌ایم. */
+  const { data, isFetching, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    useInfiniteQuery({
+      queryKey: ['employees', query],
+      queryFn: ({ pageParam }) =>
+        api<Employee[]>(
+          `/api/employees?q=${encodeURIComponent(query)}&limit=${PAGE}&offset=${pageParam}`,
+        ),
+      initialPageParam: 0,
+      getNextPageParam: (last, pages) =>
+        last.length < PAGE ? undefined : pages.length * PAGE,
+    })
+
+  const results = data?.pages.flat()
 
   const pageRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<HTMLDivElement>(null)
@@ -46,7 +57,9 @@ export default function Directory() {
   const rosterRef = useRef<HTMLDivElement>(null)
   const countRef = useRef<HTMLSpanElement>(null)
   const emptyRef = useRef<HTMLDivElement>(null)
+  const sentinelRef = useRef<HTMLDivElement>(null)
   const lastCount = useRef(-1)
+  const [atEnd, setAtEnd] = useState(false)
 
   /* سنجاق‌ها روی همین مرورگر می‌مانند — سرور از آن‌ها خبر ندارد */
   const [pins, setPins] = useState<Set<number>>(readPins)
@@ -246,11 +259,12 @@ export default function Directory() {
         document.documentElement.scrollHeight - window.innerHeight > 24
       page?.classList.toggle('at-end', reachedEnd || !scrollable)
     }
-    const sentinel = document.createElement('div')
-    roster.appendChild(sentinel)
+    const sentinel = sentinelRef.current
+    if (!sentinel) return
     const io = new IntersectionObserver(
       ([entry]) => {
         reachedEnd = entry.isIntersecting
+        setAtEnd(entry.isIntersecting)
         sync()
       },
       { rootMargin: '96px' },
@@ -268,9 +282,16 @@ export default function Directory() {
       io.disconnect()
       ro.disconnect()
       window.removeEventListener('resize', sync)
-      sentinel.remove()
     }
   }, [])
+
+  /* --- خواندنِ ترازِ بعدی ---
+         همان نگهبانِ ته فهرست ماشه را می‌کشد. چون وضعیت است نه متغیرِ محلی،
+         اگر صفحه‌ی تازه هم کوتاه‌تر از کادرِ دید بود و نگهبان همچنان دیده
+         می‌شد، خواندنِ بعدی خودش دنبال می‌شود. --- */
+  useEffect(() => {
+    if (atEnd && hasNextPage && !isFetchingNextPage) fetchNextPage()
+  }, [atEnd, hasNextPage, isFetchingNextPage, fetchNextPage, rows.length])
 
   /* یک کادرِ دید پایین‌تر — کمی هم‌پوشانی می‌ماند تا رشته‌ی نگاه پاره نشود */
   function scrollDown() {
@@ -420,7 +441,7 @@ export default function Directory() {
               value={q}
               onValueChange={changeSearchText}
               onSearch={search}
-              busy={isFetching}
+              busy={isFetching && !isFetchingNextPage}
             />
           </form>
 
@@ -499,6 +520,25 @@ export default function Directory() {
               </button>
             </div>
           )}
+
+          {/* ترازِ در حالِ خواندن — پژواکی که هنوز برنگشته */}
+          {isFetchingNextPage && (
+            <p className="roster-status" role="status">
+              <svg viewBox="0 0 120 8" aria-hidden="true" className="roster-status-line">
+                <path d="M0 4C15 1 25 7 40 4S65 1 80 4s25 3 40 0" />
+              </svg>
+              <span>در حال خواندنِ ادامه</span>
+            </p>
+          )}
+
+          {/* کفِ نقشه */}
+          {!hasNextPage && !isFetching && rows.length > 0 && (
+            <p className="roster-status roster-status--end">
+              {browsing ? 'پایان فهرست' : 'پایان نتایج'}
+            </p>
+          )}
+
+          <div ref={sentinelRef} aria-hidden="true" />
         </main>
 
         {/* راهنمای اسکرول — کفِ کادرِ دید می‌ماند تا ته فهرست بیاید */}

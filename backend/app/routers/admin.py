@@ -9,7 +9,7 @@ from ..database import get_db
 from ..ai import suggest_fields
 from ..importer import apply_import, parse_csv, parse_xlsx
 from ..models import ChangeLog, Employee, User, gen_temp_password, is_temp_password
-from ..schemas import (EmployeeCreate, EmployeeOut, EmployeeUpdate,
+from ..schemas import (BulkDeleteIn, EmployeeCreate, EmployeeOut, EmployeeUpdate,
                        ImportResult, SuggestOut, TempPasswordOut, UserCreate,
                        UserCreatedOut, UserCredentialsIn, UserOut)
 from ..security import get_current_user, hash_password, require_admin
@@ -84,6 +84,36 @@ def update_employee(
         fts.upsert_employee(db, emp.id, emp.search_text)
         log(db, user, "employee", emp.id, "update", changed)
     return emp
+
+
+BULK_DELETE_MAX = 500
+
+
+@router.post("/employees/bulk-delete")
+def bulk_delete_employees(
+    data: BulkDeleteIn, user=Depends(require_admin), db: Session = Depends(get_db)
+):
+    """حذفِ چند نفر با هم — یک تراکنش و یک سطرِ لاگ، نه یکی به ازای هر نفر."""
+    ids = list(dict.fromkeys(data.ids))
+    if not ids:
+        raise HTTPException(400, "کسی برای حذف انتخاب نشده است")
+    if len(ids) > BULK_DELETE_MAX:
+        raise HTTPException(400, f"در هر نوبت حداکثر {BULK_DELETE_MAX} نفر حذف می‌شود")
+
+    emps = db.query(Employee).filter(Employee.id.in_(ids)).all()
+    if not emps:
+        raise HTTPException(404, "یافت نشد")
+
+    from .. import fts
+    found = [(e.id, e.full_name) for e in emps]
+    for emp in emps:
+        db.delete(emp)
+    for emp_id, _ in found:
+        fts.delete_employee(db, emp_id)
+    names = [name for _, name in found]
+    # log خودش commit می‌کند؛ حذف‌ها و پاک‌سازیِ ایندکس با همان یک تراکنش می‌نشیند.
+    log(db, user, "employee", None, "bulk_delete", {"count": len(emps), "names": names[:20]})
+    return {"deleted": len(emps)}
 
 
 @router.delete("/employees/{emp_id}")

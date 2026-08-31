@@ -97,6 +97,7 @@ const LOG_VERBS: Record<string, { verb: string; tone: Tone }> = {
   create: { verb: 'ساخت', tone: 'add' },
   update: { verb: 'ویرایش کرد', tone: 'edit' },
   delete: { verb: 'حذف کرد', tone: 'remove' },
+  bulk_delete: { verb: 'حذف کرد', tone: 'remove' },
   import: { verb: 'ایمپورت کرد', tone: 'add' },
   toggle_admin: { verb: 'نقشِ حساب را عوض کرد', tone: 'edit' },
   toggle_active: { verb: 'وضعیتِ حساب را عوض کرد', tone: 'edit' },
@@ -144,6 +145,9 @@ function describeLog(l: LogEntry, subject: string) {
         lines.push(`${FIELD_LABELS[key] ?? key}: ${logValue(from)} ← ${logValue(to)}`)
       }
     }
+  } else if (l.action === 'bulk_delete') {
+    const names = Array.isArray(d.names) ? (d.names as string[]) : []
+    if (names.length) lines.push(names.join('، '))
   } else if (l.action === 'toggle_admin') {
     lines.push(d.is_admin ? 'دسترسیِ مدیریت داده شد' : 'دسترسیِ مدیریت گرفته شد')
   } else if (l.action === 'toggle_active') {
@@ -215,6 +219,13 @@ export default function Admin() {
   const [notice, setNotice] = useState('')
   const [importing, setImporting] = useState(false)
 
+  /* انتخابِ چندتایی برای حذفِ گروهی. فهرست خودش هرس نمی‌شود؛ هنگام
+     رندر با پرسنلِ موجود تلاقی می‌گیرد، پس شناسه‌ی حذف‌شده هیچ‌وقت به
+     نوار یا به درخواست راه پیدا نمی‌کند. */
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [confirmBulk, setConfirmBulk] = useState(false)
+  const [bulkBusy, setBulkBusy] = useState(false)
+
   /* حساب‌ها: رمز هیچ‌جا نگه داشته نمی‌شود. اگر کسی رمزش را گم کرد، ادمین
      «رمز موقت» می‌سازد و همان یک‌بار می‌بیندش. */
   const [issued, setIssued] = useState<IssuedCredential | null>(null)
@@ -266,6 +277,8 @@ export default function Admin() {
   const noticeRef = useRef<HTMLDivElement>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
   const sheetRef = useRef<HTMLFormElement>(null)
+  const barRef = useRef<HTMLDivElement>(null)
+  const confirmRef = useRef<HTMLDivElement>(null)
 
   // زیرخطِ متحرک تب‌ها — با هر تغییر تب سر جایش می‌لغزد،
   // و با تغییر اندازه‌ی پنجره دوباره اندازه‌گیری می‌شود
@@ -508,6 +521,71 @@ export default function Admin() {
     qc.invalidateQueries({ queryKey: ['admin-employees'] })
   }
 
+  /* --- انتخابِ گروهی -------------------------------------------------
+     مرجعِ حقیقت همین تلاقی است: هر جا شمار یا شناسه‌ها لازم شود از
+     `chosen` می‌آید، نه از خودِ `selected`. */
+  const rows = people ?? []
+  const chosen = rows.filter((p) => selected.has(p.id))
+  const allChosen = rows.length > 0 && chosen.length === rows.length
+
+  function toggleRow(id: number) {
+    setSelected((cur) => {
+      const next = new Set(cur)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function toggleAllRows() {
+    setSelected(allChosen ? new Set() : new Set(rows.map((p) => p.id)))
+  }
+
+  async function removeSelected() {
+    setBulkBusy(true)
+    try {
+      const res = await api<{ deleted: number }>('/api/admin/employees/bulk-delete', {
+        method: 'POST',
+        body: JSON.stringify({ ids: chosen.map((p) => p.id) }),
+      })
+      setSelected(new Set())
+      setConfirmBulk(false)
+      flashNotice(`${faDigits(res.deleted)} نفر حذف شد`)
+      qc.invalidateQueries({ queryKey: ['admin-employees'] })
+    } catch (err) {
+      flashNotice(err instanceof Error ? err.message : 'حذف نشد', 4000)
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
+  /* نوارِ اقدام از پایین بالا می‌آید — یک لحظه‌ی موشن، نه یک افکتِ پراکنده. */
+  const hasChosen = chosen.length > 0
+  useEffect(() => {
+    if (!hasChosen || !barRef.current || !shouldAnimate()) return
+    gsap.from(barRef.current, { y: 18, opacity: 0, duration: 0.45, ease: 'expo.out' })
+  }, [hasChosen])
+
+  useEffect(() => {
+    if (!confirmBulk) return
+    if (!prefersReducedMotion() && confirmRef.current) {
+      gsap.from(confirmRef.current, {
+        y: 32,
+        scale: 0.97,
+        opacity: 0,
+        duration: 0.5,
+        ease: 'expo.out',
+      })
+    }
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setConfirmBulk(false)
+    window.addEventListener('keydown', onKey)
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.body.style.overflow = ''
+    }
+  }, [confirmBulk])
+
   async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
@@ -621,7 +699,9 @@ export default function Admin() {
   const logRows = (logs ?? []).map((l) => {
     const d = (l.details ?? {}) as Record<string, unknown>
     const subject =
-      l.entity === 'employee'
+      l.action === 'bulk_delete'
+        ? `${faDigits(Number(d.count ?? 0))} نفر`
+        : l.entity === 'employee'
         ? people?.find((p) => p.id === l.entity_id)?.full_name ??
           String(d.name ?? `#${l.entity_id ?? ''}`)
         : l.entity === 'user'
@@ -777,9 +857,22 @@ export default function Admin() {
               {/* جدول روی صفحه‌ی باریک خودش می‌لغزد، نه اینکه ستون‌های
                   آخر بیرون از کادر بمانند */}
               <div className="overflow-x-auto rounded-2xl border border-sand-200 bg-paper shadow-card">
-                <table className="w-full min-w-[46rem] text-[14px] tnum">
+                <table className="w-full min-w-[50rem] text-[14px] tnum">
                   <thead className="bg-sand-100/70 text-ink-500 text-xs">
                     <tr>
+                      <th className="w-10 px-4 py-3">
+                        <input
+                          type="checkbox"
+                          aria-label={allChosen ? 'برداشتن انتخاب همه' : 'انتخاب همه'}
+                          checked={allChosen}
+                          disabled={rows.length === 0}
+                          ref={(el) => {
+                            if (el) el.indeterminate = hasChosen && !allChosen
+                          }}
+                          onChange={toggleAllRows}
+                          className="pick"
+                        />
+                      </th>
                       <th className="text-right px-4 py-3 font-medium">نام</th>
                       <th className="text-right px-4 py-3 font-medium">واحد</th>
                       <th className="text-right px-4 py-3 font-medium">سمت</th>
@@ -789,12 +882,24 @@ export default function Admin() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(people ?? []).map((p) => (
+                    {rows.map((p) => (
                       <tr
                         key={p.id}
                         data-row
-                        className="border-t border-sand-100 hover:bg-tint/50 transition-colors duration-150"
+                        aria-selected={selected.has(p.id)}
+                        className={`border-t border-sand-100 transition-colors duration-200 ${
+                          selected.has(p.id) ? 'bg-tint' : 'hover:bg-tint/50'
+                        }`}
                       >
+                        <td className="px-4 py-3">
+                          <input
+                            type="checkbox"
+                            aria-label={`انتخاب ${p.full_name}`}
+                            checked={selected.has(p.id)}
+                            onChange={() => toggleRow(p.id)}
+                            className="pick"
+                          />
+                        </td>
                         <td className="px-4 py-3 font-medium text-ink-900">{p.full_name}</td>
                         <td className="px-4 py-3 text-ink-600">{p.department}</td>
                         <td className="px-4 py-3 text-ink-600">{p.job_title}</td>
@@ -818,7 +923,7 @@ export default function Admin() {
                     ))}
                   </tbody>
                 </table>
-                {(people ?? []).length === 0 && (
+                {rows.length === 0 && (
                   <div className="text-center py-14 px-4">
                     <PersonIcon className="w-10 h-10 mx-auto text-ink-300 mb-3" />
                     <p className="text-sm text-ink-500">
@@ -853,7 +958,7 @@ export default function Admin() {
                   type="checkbox"
                   checked={newUser.is_admin}
                   onChange={(e) => setNewUser({ ...newUser, is_admin: e.target.checked })}
-                  className="h-4 w-4 rounded border-sand-300 accent-sea-500"
+                  className="pick"
                 />
                 دسترسی مدیریت
               </label>
@@ -1049,6 +1154,103 @@ export default function Admin() {
           )}
         </div>
       </main>
+
+      {/* نوارِ انتخاب — تا چیزی انتخاب نشده وجود ندارد، و وقتی هست
+          شمار و دو راهِ خروج را کنار هم می‌گذارد: لغو یا حذف. */}
+      {tab === 'people' && hasChosen && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-5 z-40 flex justify-center px-5">
+          <div
+            ref={barRef}
+            role="status"
+            className="pointer-events-auto flex items-center gap-3 rounded-2xl border border-sand-200 bg-paper/95 px-4 py-2.5 shadow-panel backdrop-blur"
+          >
+            <span className="text-sm text-ink-600">
+              <b className="tnum text-ink-900">{faDigits(chosen.length)}</b> نفر انتخاب شد
+            </span>
+            <span aria-hidden="true" className="h-5 w-px bg-sand-200" />
+            <button
+              type="button"
+              onClick={() => setSelected(new Set())}
+              className="rounded-lg px-2.5 py-1.5 text-sm text-ink-500 transition-colors duration-200 hover:bg-sand-100 hover:text-ink-900"
+            >
+              لغو انتخاب
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmBulk(true)}
+              className="rounded-lg bg-red-500 px-3.5 py-1.5 text-sm font-medium text-white transition-colors duration-200 hover:bg-red-600 active:scale-[.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sea-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-paper"
+            >
+              حذف انتخاب‌شده‌ها
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* تأییدِ حذفِ گروهی — کارِ برگشت‌ناپذیر باید اسمِ کسانی را که پاک
+          می‌شوند نشان بدهد، نه فقط عددشان را. */}
+      {confirmBulk && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="تأیید حذف گروهی"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !bulkBusy) setConfirmBulk(false)
+          }}
+          className="fixed inset-0 z-50 flex items-end justify-center bg-deep-950/45 p-0 backdrop-blur-sm sm:items-center sm:p-6"
+        >
+          <div
+            ref={confirmRef}
+            className="w-full max-w-md space-y-4 rounded-t-2xl border border-sand-200 bg-paper p-6 shadow-panel sm:rounded-2xl"
+          >
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-ink-900">
+                حذف <span className="tnum">{faDigits(chosen.length)}</span> نفر
+              </h2>
+              <button
+                type="button"
+                onClick={() => setConfirmBulk(false)}
+                aria-label="بستن"
+                className="grid h-8 w-8 place-items-center rounded-lg text-ink-400 transition-colors duration-200 hover:bg-sand-100 hover:text-ink-700"
+              >
+                <CloseIcon className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-sm text-ink-500">
+              پرونده‌ی این افراد از دفترچه پاک می‌شود و برگشت ندارد. نشانی از کار در تبِ
+              «تغییرات» می‌ماند.
+            </p>
+
+            <ul className="max-h-44 space-y-1 overflow-y-auto rounded-xl border border-sand-200 bg-sand-50/60 p-3 text-sm text-ink-700">
+              {chosen.map((p) => (
+                <li key={p.id} className="truncate">
+                  {p.full_name}
+                  {p.department && <span className="text-ink-400"> · {p.department}</span>}
+                </li>
+              ))}
+            </ul>
+
+            <div className="flex gap-3 pt-1">
+              <button
+                type="button"
+                onClick={removeSelected}
+                disabled={bulkBusy}
+                className="flex-1 rounded-xl bg-red-500 py-3 font-medium text-white transition-colors duration-200 hover:bg-red-600 active:scale-[.98] disabled:opacity-60"
+              >
+                {bulkBusy ? 'در حال حذف…' : 'بله، حذف کن'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmBulk(false)}
+                disabled={bulkBusy}
+                className="rounded-xl bg-sand-100 px-6 text-ink-700 transition-colors hover:bg-sand-200 disabled:opacity-60"
+              >
+                انصراف
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* رمزِ موقت — یک‌بار و همین یک‌بار */}
       {issued && (

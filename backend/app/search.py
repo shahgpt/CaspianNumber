@@ -101,7 +101,7 @@ def _score(employee: Employee, terms: list[str], raw_query: str) -> int:
     return score
 
 
-def search_employees(db: Session, query: str, limit: int = 30):
+def search_employees(db: Session, query: str, limit: int = 30, offset: int = 0):
     q = (query or "").strip()
     if not q:
         return []
@@ -136,7 +136,8 @@ def search_employees(db: Session, query: str, limit: int = 30):
     scored = [(e, s) for e, s in scored if s > 0]
     scored.sort(key=lambda pair: pair[1], reverse=True)
 
-    # if nothing survived scoring (e.g. only digits matched), show candidates as-is
+    # ponytail: صفحه‌بندی روی همان ۳۰۰ کاندیدای پیش‌فیلترشده است — عمقِ
+    # بیشتر لازم شد، برش را به خودِ کوئری ببر
     if not scored and digits and len(digits) >= 3:
-        return candidates[:limit]
-    return [emp for emp, _ in scored[:limit]]
+        return candidates[offset : offset + limit]
+    return [emp for emp, _ in scored[offset : offset + limit]]

@@ -103,6 +103,12 @@ class UserCredentialsIn(BaseModel):
     password: str = ""
 
 
+class BulkDeleteIn(BaseModel):
+    """شناسه‌های انتخاب‌شده برای حذفِ دسته‌جمعی."""
+
+    ids: list[int] = []
+
+
 class ImportResult(BaseModel):
     created: int = 0
     updated: int = 0
