@@ -91,7 +91,6 @@
   --contour-alpha: 0.16;
   --contour-alpha-strong: 0.4;
 
-  --shadow-card: 0 1px 2px rgba(4, 30, 66, 0.04), 0 10px 28px -12px rgba(4, 30, 66, 0.12);
   --shadow-lift: 0 2px 4px rgba(4, 30, 66, 0.06), 0 20px 44px -22px rgba(4, 30, 66, 0.38);
   --shadow-panel: 0 4px 8px rgba(4, 30, 66, 0.08), 0 28px 64px -24px rgba(4, 30, 66, 0.42);
 
@@ -154,7 +153,6 @@
   --contour-alpha: 0.13;
   --contour-alpha-strong: 0.36;
 
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5), 0 12px 32px -20px rgba(0, 0, 0, 0.9);
   --shadow-lift: 0 2px 6px rgba(0, 0, 0, 0.55), 0 20px 44px -22px rgba(0, 0, 0, 0.95);
   --shadow-panel: 0 4px 12px rgba(0, 0, 0, 0.6), 0 28px 64px -24px rgba(0, 0, 0, 1);
 }
@@ -763,11 +761,14 @@ input:-webkit-autofill:focus {
    پس پرده‌برداریِ اولیه روی همین لایه‌ی داخلی می‌نشیند تا دو موتورِ
    انیمیشن سرِ یک گره دعوا نکنند. */
 .roster-reveal {
+  position: relative;
   display: flex;
   width: 100%;
   align-items: center;
 }
-.roster-item::before {
+/* خط مویی روی همین لایه است نه روی <li>: باید با ردیف پرده بردارد،
+   وگرنه سی خط یک‌جا می‌پرند بیرون در حالی که محتوا هنوز می‌آید. */
+.roster-reveal::before {
   content: '';
   position: absolute;
   inset-inline: 0;

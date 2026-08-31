@@ -106,7 +106,6 @@ export default {
         DEFAULT: v('--accent'),
       },
       boxShadow: {
-        card: 'var(--shadow-card)',
         lift: 'var(--shadow-lift)',
         panel: 'var(--shadow-panel)',
       },

@@ -845,7 +845,7 @@ export default function Admin() {
               {/* list */}
               {/* جدول روی صفحه‌ی باریک خودش می‌لغزد، نه اینکه ستون‌های
                   آخر بیرون از کادر بمانند */}
-              <div className="overflow-x-auto rounded-2xl border border-sand-200 bg-paper shadow-card">
+              <div className="overflow-x-auto rounded-2xl border border-sand-200 bg-paper">
                 <table className="w-full min-w-[50rem] text-[14px] tnum">
                   <thead className="bg-sand-100/70 text-ink-500 text-xs">
                     <tr>
@@ -931,7 +931,7 @@ export default function Admin() {
                 مدیریت باید صریح تیک بخورد. */}
             <form
               onSubmit={addUser}
-              className="mb-4 flex flex-wrap items-end gap-3 rounded-2xl border border-sand-200 bg-paper p-4 shadow-card"
+              className="mb-4 flex flex-wrap items-end gap-3 rounded-2xl border border-sand-200 bg-paper p-4"
             >
               <div className="min-w-[10rem] flex-1">
                 <label className="mb-1 block text-xs font-medium text-ink-500">نام کاربری</label>
@@ -965,7 +965,7 @@ export default function Admin() {
               </p>
             </form>
 
-            <div className="overflow-x-auto rounded-2xl border border-sand-200 bg-paper shadow-card">
+            <div className="overflow-x-auto rounded-2xl border border-sand-200 bg-paper">
               <table className="w-full min-w-[30rem] text-[14px] tnum">
                 <thead className="bg-sand-100/70 text-ink-500 text-xs">
                   <tr>
@@ -1085,7 +1085,7 @@ export default function Admin() {
                     <span className="tnum">{faDigits(rows.length)}</span>
                   </h3>
 
-                  <div className="overflow-hidden rounded-2xl border border-sand-200 bg-paper shadow-card">
+                  <div className="overflow-hidden rounded-2xl border border-sand-200 bg-paper">
                     {rows.map((l) => (
                       <article
                         key={l.id}
@@ -1130,7 +1130,7 @@ export default function Admin() {
               ))}
 
               {visibleLogs.length === 0 && (
-                <div className="rounded-2xl border border-sand-200 bg-paper px-4 py-14 text-center shadow-card">
+                <div className="rounded-2xl border border-sand-200 bg-paper px-4 py-14 text-center">
                   <BookIcon className="mx-auto mb-3 h-10 w-10 text-ink-300" />
                   <p className="text-sm text-ink-500">
                     {(logs ?? []).length === 0

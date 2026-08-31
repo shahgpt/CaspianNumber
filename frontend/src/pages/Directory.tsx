@@ -143,7 +143,7 @@ export default function Directory() {
   useEffect(() => {
     const roster = rosterRef.current
     if (!roster) return
-    const revealer = createRevealer(roster, '.roster-reveal', {
+    const revealer = createRevealer(roster, '.roster-reveal, .roster-status--end', {
       y: 12,
       duration: 0.55,
       each: 0.04,
