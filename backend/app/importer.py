@@ -11,11 +11,17 @@ from .models import ChangeLog, Employee
 # Persian (and common alternate) headers -> model field
 HEADER_MAP = {
     "نام": "first_name",
+    "نام همکار": "first_name",
+    "همکار": "first_name",
     "firstname": "first_name",
     "نام خانوادگی": "last_name",
     "lastname": "last_name",
     "نام لاتین": "latin_name",
     "لاتین": "latin_name",
+    # خروجی خام سانترال — فقط همین سه ستون؛ بقیه (از جمله Secret) رمز و تنظیمات‌اند.
+    "display name": "latin_name",
+    "user extension": "extension",
+    "direct did": "direct_number",
     "شماره مستقیم": "direct_number",
     "خط مستقیم": "direct_number",
     "مستقیم": "direct_number",
@@ -93,19 +99,32 @@ def _match_field(nh: str) -> str | None:
     return best_field
 
 
-def _build_header_map(headers) -> dict[int, str]:
-    """Map column index -> field name using normalized header matching."""
-    out = {}
-    seen_fields = set()
+def _blocks(headers) -> list[dict[int, str]]:
+    """ستون‌ها را به جدول‌های کنارهم می‌شکند.
+
+    تکرارِ یک فیلد در سرستون یعنی جدولِ بعدی شروع شده — «واحد|داخلی|واحد|داخلی»
+    دو جدول است، نه چهار ستونِ یک جدول.
+    """
+    out, cur = [], {}
     for i, h in enumerate(headers):
-        nh = _norm_header(h)
-        if not nh:
+        field = _match_field(_norm_header(h))
+        if not field:
             continue
-        field = _match_field(nh)
-        if field and field not in seen_fields:
-            out[i] = field
-            seen_fields.add(field)
+        if field in cur.values():
+            out.append(cur)
+            cur = {}
+        cur[i] = field
+    if cur:
+        out.append(cur)
     return out
+
+
+def _split_extensions(ext: str) -> list[str]:
+    """«۱۰۲-۱۰۳» دو داخلی است، نه یک شماره‌ی بلند."""
+    parts = [p.strip() for p in ext.split("-")]
+    if len(parts) > 1 and all(p.isdigit() and len(p) <= 5 for p in parts):
+        return parts
+    return [ext]
 
 
 def parse_xlsx(content: bytes) -> list[dict]:
@@ -116,24 +135,49 @@ def parse_xlsx(content: bytes) -> list[dict]:
 
 
 def parse_csv(content: bytes) -> list[dict]:
+    """جداکننده حدس زده می‌شود — همه‌ی خروجی‌های تلفن‌سانترال کاما نیستند."""
     text = content.decode("utf-8-sig", errors="replace")
-    reader = csv.reader(io.StringIO(text))
-    return _parse_rows(list(reader))
+    try:
+        dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t|\x1b")
+    except csv.Error:
+        dialect = csv.excel
+    return _parse_rows(list(csv.reader(io.StringIO(text), dialect)))
 
 
 def _parse_rows(rows) -> list[dict]:
     if not rows:
         return []
-    colmap = _build_header_map(rows[0])
+    # سرستون همیشه سطر اول نیست: بالایش سطر خالی یا عنوان می‌گذارند.
+    # سطری که بیشترین ستونِ شناخته‌شده را بدهد سرستون است.
+    hdr, blocks = 0, []
+    for i, row in enumerate(rows[:20]):
+        b = _blocks(row)
+        if sum(map(len, b)) > sum(map(len, blocks)):
+            hdr, blocks = i, b
     records = []
-    for row in rows[1:]:
-        rec = {}
-        for idx, field in colmap.items():
-            if idx < len(row):
-                rec[field] = _cell_str(row[idx])
-        # skip fully empty rows
-        if any(v for v in rec.values()):
-            records.append(rec)
+    section = [""] * len(blocks)
+    for row in rows[hdr + 1:]:
+        for bi, colmap in enumerate(blocks):
+            rec = {}
+            for idx, field in colmap.items():
+                if idx < len(row):
+                    rec[field] = _cell_str(row[idx])
+            if not any(v for v in rec.values()):
+                continue
+            # سطری که فقط واحد دارد عنوانِ بخش است، نه یک نفر:
+            # واحدِ سطرهای زیرِ خودش می‌شود و برچسبِ خودش سمت می‌شود.
+            if rec.get("department") and not any(v for k, v in rec.items() if k != "department"):
+                section[bi] = rec["department"]
+                continue
+            if section[bi] and rec.get("department"):
+                if not rec.get("job_title"):
+                    rec["job_title"] = rec["department"]
+                rec["department"] = section[bi]
+            parts = _split_extensions(rec.get("extension", ""))
+            if len(parts) > 1:
+                records.extend({**rec, "extension": p} for p in parts)
+            else:
+                records.append(rec)
     return records
 
 
