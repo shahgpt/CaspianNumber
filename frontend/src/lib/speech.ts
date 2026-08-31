@@ -195,7 +195,15 @@ export function useSpeech({ onText, lang = 'fa-IR' }: SpeechOptions): Speech {
       // کاربر خودش قطع کرده؛ خطا نیست
       if (e.error === 'aborted') return
 
-      setError(MESSAGES[e.error] ?? `مشکل در تبدیل گفتار (${e.error})`)
+      // سافاری موتور گفتارش را از Dictation سیستم می‌گیرد؛ وقتی آن خاموش
+      // باشد بدون هیچ پرسشی همین خطا را می‌دهد. گفتنِ «مرورگر اجازه نداد»
+      // کاربر را به نوار آدرس می‌فرستد، جایی که چیزی برای زدن نیست.
+      const safariHint =
+        isSafari() && (e.error === 'service-not-allowed' || e.error === 'not-allowed')
+          ? 'سافاری گفتار را اجازه نداد — Dictation را در تنظیمات دستگاه (Keyboard → Dictation) روشن کنید و صفحه را روی HTTPS باز کنید'
+          : null
+
+      setError(safariHint ?? MESSAGES[e.error] ?? `مشکل در تبدیل گفتار (${e.error})`)
 
       // بعضی نسخه‌های کروم پس از خطا `end` نمی‌فرستند؛ اگر ref پاک نشود
       // دکمه برای همیشه در حالتِ «در حال شنیدن» گیر می‌کند و کلیکِ بعدی
