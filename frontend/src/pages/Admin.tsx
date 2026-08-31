@@ -393,7 +393,7 @@ export default function Admin() {
   // بنر اعلان
   useEffect(() => {
     if (!notice || !noticeRef.current) return
-    gsap.from(noticeRef.current, { opacity: 0, y: -10, duration: 0.35, ease: 'expo.out' })
+    gsap.from(noticeRef.current, { opacity: 0, y: 10, duration: 0.35, ease: 'expo.out' })
   }, [notice])
 
   /* انیمیشن مودال هنگام باز شدن + بستن با Escape.
@@ -803,17 +803,6 @@ export default function Admin() {
       </header>
 
       <main className="relative z-10 mx-auto w-full max-w-6xl px-5 py-7 pb-28 sm:px-8">
-        {notice && (
-          <div
-            ref={noticeRef}
-            role="status"
-            className="mb-4 whitespace-pre-line rounded-xl bg-tint ring-1 ring-sand-200 text-ink-900 px-4 py-2.5 text-sm inline-flex items-start gap-2"
-          >
-            <CheckIcon className="w-4 h-4 mt-0.5 text-sea-600" />
-            <span>{notice}</span>
-          </div>
-        )}
-
         <div ref={contentRef}>
           {tab === 'people' && (
             <>
@@ -1154,6 +1143,27 @@ export default function Admin() {
           )}
         </div>
       </main>
+
+      {/* بنرِ اعلان — شناور و بیرونِ <main>: توی جریانِ صفحه، بالای محتوا
+          می‌نشست و کسی که پایینِ جدول کار می‌کرد اصلاً نمی‌دیدش. بیرون از
+          main هم باید بماند، وگرنه z-index اش داخلِ لایه‌ی main حبس
+          می‌شود و روی مودالِ باز (حالتِ خطا) بالا نمی‌آید. */}
+      {notice && (
+        <div
+          className={`pointer-events-none fixed inset-x-0 z-[60] flex justify-center px-5 ${
+            tab === 'people' && hasChosen ? 'bottom-20' : 'bottom-5'
+          }`}
+        >
+          <div
+            ref={noticeRef}
+            role="status"
+            className="inline-flex max-w-full items-start gap-2 whitespace-pre-line rounded-xl border border-sand-200 bg-paper/95 px-4 py-2.5 text-sm text-ink-900 shadow-panel backdrop-blur"
+          >
+            <CheckIcon className="w-4 h-4 mt-0.5 shrink-0 text-sea-600" />
+            <span>{notice}</span>
+          </div>
+        </div>
+      )}
 
       {/* نوارِ انتخاب — تا چیزی انتخاب نشده وجود ندارد، و وقتی هست
           شمار و دو راهِ خروج را کنار هم می‌گذارد: لغو یا حذف. */}
