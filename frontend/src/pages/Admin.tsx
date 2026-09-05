@@ -5,7 +5,7 @@ import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import { Link } from 'react-router-dom'
 import { LogOut } from 'lucide-react'
 import { api, toEnDigits } from '../lib/api'
-import { forgetSession } from '../lib/auth'
+import { forgetSession, useSession } from '../lib/auth'
 import BrandLockup from '../components/BrandLockup'
 import ThemeToggle from '../components/ThemeToggle'
 import type { Employee } from '../lib/api'
@@ -73,6 +73,7 @@ const AI_SEEDS: (keyof Employee)[] = ['first_name', 'last_name', 'job_title', 'd
 const TABS = [
   ['people', 'پرسنل'],
   ['users', 'کاربران'],
+  ['organizations', 'واحدها'],
   ['logs', 'تغییرات'],
 ] as const
 
@@ -87,6 +88,9 @@ type LogEntry = {
   entity: string
   entity_id: number | null
   actor_name: string
+  actor_role?: string | null
+  role_before?: string | null
+  role_after?: string | null
   details: unknown
   at: string | null
 }
@@ -103,6 +107,32 @@ const LOG_VERBS: Record<string, { verb: string; tone: Tone }> = {
   toggle_active: { verb: 'وضعیتِ حساب را عوض کرد', tone: 'edit' },
   set_credentials: { verb: 'یوزر/رمز را عوض کرد', tone: 'edit' },
   reset_password: { verb: 'رمز موقت ساخت', tone: 'edit' },
+  CREATE: { verb: 'ساخت', tone: 'add' },
+  UPDATE: { verb: 'ویرایش کرد', tone: 'edit' },
+  DELETE: { verb: 'حذف کرد', tone: 'remove' },
+  BULK_DELETE: { verb: 'حذف گروهی کرد', tone: 'remove' },
+  IMPORT: { verb: 'ایمپورت کرد', tone: 'add' },
+  USER_CREATED: { verb: 'حساب ساخت', tone: 'add' },
+  ROLE_CHANGED: { verb: 'سطح دسترسی را تغییر داد برای', tone: 'edit' },
+  CREDENTIALS_CHANGED: { verb: 'مشخصات ورود را تغییر داد برای', tone: 'edit' },
+  PASSWORD_RESET: { verb: 'رمز موقت ساخت برای', tone: 'edit' },
+  ACCOUNT_STATUS_CHANGED: { verb: 'وضعیت حساب را تغییر داد برای', tone: 'edit' },
+  PASSWORD_CHANGED: { verb: 'رمز عبور را تغییر داد برای', tone: 'edit' },
+  LOGIN_SUCCESS: { verb: 'وارد سامانه شد؛', tone: 'add' },
+  LOGIN_FAILED: { verb: 'ورود ناموفق داشت؛', tone: 'remove' },
+  LOGIN_BLOCKED: { verb: 'به‌دلیل تلاش‌های ورود مسدود شد؛', tone: 'remove' },
+  MFA_SETUP_STARTED: { verb: 'راه‌اندازی ورود دومرحله‌ای را آغاز کرد؛', tone: 'edit' },
+  MFA_SETUP_REQUIRED: { verb: 'نیازمند راه‌اندازی ورود دومرحله‌ای شد؛', tone: 'edit' },
+  MFA_ENABLED: { verb: 'ورود دومرحله‌ای را فعال کرد؛', tone: 'add' },
+  MFA_CHALLENGE: { verb: 'به مرحلهٔ تأیید دومرحله‌ای رسید؛', tone: 'edit' },
+  MFA_FAILED: { verb: 'تأیید دومرحله‌ای ناموفق داشت؛', tone: 'remove' },
+  MFA_SUCCESS: { verb: 'ورود دومرحله‌ای را تأیید کرد؛', tone: 'add' },
+  DIRECTORY_VIEW: { verb: 'فهرست را مشاهده کرد؛', tone: 'edit' },
+  SENSITIVE_LIST_VIEW: { verb: 'فهرست حساس را مشاهده کرد؛', tone: 'edit' },
+  VCARD_VIEW: { verb: 'کارت تماس را مشاهده کرد؛', tone: 'edit' },
+  AUDIT_LOG_VIEW: { verb: 'گزارش فعالیت را مشاهده کرد؛', tone: 'edit' },
+  ORGANIZATION_CREATED: { verb: 'واحد سازمانی ساخت؛', tone: 'add' },
+  ORGANIZATION_UPDATED: { verb: 'واحد سازمانی را ویرایش کرد؛', tone: 'edit' },
 }
 
 const TONE_DOT: Record<Tone, string> = {
@@ -138,7 +168,7 @@ function describeLog(l: LogEntry, subject: string) {
   const { verb, tone } = LOG_VERBS[l.action] ?? { verb: l.action, tone: 'edit' as Tone }
   const lines: string[] = []
 
-  if (l.action === 'update') {
+  if (l.action === 'update' || l.action === 'UPDATE') {
     for (const [key, ch] of Object.entries(d)) {
       if (ch && typeof ch === 'object' && 'to' in (ch as object)) {
         const { from, to } = ch as { from: unknown; to: unknown }
@@ -155,12 +185,18 @@ function describeLog(l: LogEntry, subject: string) {
   } else if (l.action === 'set_credentials') {
     const fields = Array.isArray(d.fields) ? (d.fields as string[]) : []
     if (fields.length) lines.push(fields.map((f) => CRED_LABELS[f] ?? f).join(' و ') + ' عوض شد')
-  } else if (l.action === 'import') {
+  } else if (l.action === 'import' || l.action === 'IMPORT') {
     lines.push(
       `${faDigits(Number(d.created ?? 0))} تازه · ${faDigits(Number(d.updated ?? 0))} به‌روز · ${faDigits(Number(d.skipped ?? 0))} ردشده`,
     )
     const errors = Array.isArray(d.errors) ? d.errors.length : 0
     if (errors) lines.push(`${faDigits(errors)} سطر خطا داشت`)
+  } else if (l.action === 'ROLE_CHANGED') {
+    lines.push(`نقش: ${logValue(l.role_before)} ← ${logValue(l.role_after)}`)
+    if ('manage_global_admins' in d) lines.push(`مجوز مدیریت مدیران کل: ${d.manage_global_admins ? 'دارد' : 'ندارد'}`)
+    if ('can_delete_data' in d) lines.push(`مجوز حذف داده: ${d.can_delete_data ? 'دارد' : 'ندارد'}`)
+  } else if (l.action === 'ACCOUNT_STATUS_CHANGED') {
+    lines.push(d.active ? 'حساب فعال شد' : 'حساب غیرفعال شد')
   }
 
   return { verb, tone, subject, lines }
@@ -199,7 +235,15 @@ type AdminUser = {
   username: string
   is_active: boolean
   is_admin: boolean
+  organization_id: number
+  organization_name: string
+  role: 'UNIT_USER' | 'UNIT_MANAGER' | 'HEAD_OFFICE_ACCESS_ADMIN' | 'GLOBAL_ADMIN'
+  manage_global_admins: boolean
+  can_delete_data: boolean
+  mfa_enabled: boolean
 }
+
+type Organization = { id: number; name: string; code: string; kind: 'HEAD_OFFICE' | 'FACTORY'; is_active: boolean }
 
 /* رمزِ موقتی که تازه ساخته شده — یک‌بار نشان داده می‌شود و بعد از بسته‌شدنِ
    این کارت دیگر از هیچ‌جا خوانده نمی‌شود. */
@@ -210,7 +254,10 @@ type IssuedCredential = {
 
 export default function Admin() {
   const qc = useQueryClient()
-  const [tab, setTab] = useState<'people' | 'users' | 'logs'>('people')
+  const { session } = useSession()
+  const isGlobal = session?.role === 'GLOBAL_ADMIN'
+  const [tab, setTab] = useState<'people' | 'users' | 'organizations' | 'logs'>('people')
+  const [selectedOrg, setSelectedOrg] = useState('')
   const [editing, setEditing] = useState<Partial<Employee> | null>(null)
   /* تکمیلِ ماشینی: خطا باید داخلِ همین شیت دیده شود — نوارِ پیامِ صفحه
      زیرِ پرده‌ی مودال می‌ماند و کسی نمی‌بیندش. */
@@ -231,7 +278,8 @@ export default function Admin() {
   const [issued, setIssued] = useState<IssuedCredential | null>(null)
   const [credEditing, setCredEditing] = useState<AdminUser | null>(null)
   const [credForm, setCredForm] = useState({ username: '', password: '' })
-  const [newUser, setNewUser] = useState({ username: '', is_admin: false })
+  const [newUser, setNewUser] = useState({ username: '', role: 'UNIT_USER', manage_global_admins: false, can_delete_data: false })
+  const [newOrg, setNewOrg] = useState({ name: '', code: '', kind: 'FACTORY' })
   const [logFilter, setLogFilter] = useState<(typeof LOG_FILTERS)[number][0]>('all')
   const [logQuery, setLogQuery] = useState('')
 
@@ -242,6 +290,14 @@ export default function Admin() {
     staleTime: Infinity,
   })
   const directPrefix = health?.direct_prefix ?? ''
+  const needsWriteScope = Boolean(isGlobal && !selectedOrg)
+  const scopeSuffix = selectedOrg ? `?organization_id=${selectedOrg}` : ''
+  const scopeJoin = (path: string) => `${path}${path.includes('?') ? '&' : '?'}organization_id=${selectedOrg}`
+
+  const { data: organizations } = useQuery({
+    queryKey: ['organizations'],
+    queryFn: () => api<Organization[]>('/api/admin/organizations'),
+  })
 
   /** پیش‌نمایشِ شماره‌ی مستقیم برای وقتی که ادمین فیلد را خالی می‌گذارد */
   function directPreview(extension?: string): string {
@@ -250,18 +306,18 @@ export default function Admin() {
   }
 
   const { data: people } = useQuery({
-    queryKey: ['admin-employees'],
-    queryFn: () => api<Employee[]>('/api/admin/employees'),
+    queryKey: ['admin-employees', selectedOrg],
+    queryFn: () => api<Employee[]>(`/api/admin/employees${scopeSuffix}`),
   })
   const { data: users } = useQuery({
-    queryKey: ['admin-users'],
-    queryFn: () => api<AdminUser[]>('/api/admin/users'),
+    queryKey: ['admin-users', selectedOrg],
+    queryFn: () => api<AdminUser[]>(`/api/admin/users${scopeSuffix}`),
     // در تبِ تغییرات هم لازم است: لاگِ toggle نامِ حساب را همراه ندارد
     enabled: tab === 'users' || tab === 'logs',
   })
   const { data: logs } = useQuery({
-    queryKey: ['admin-logs'],
-    queryFn: () => api<LogEntry[]>('/api/admin/logs?limit=100'),
+    queryKey: ['admin-logs', selectedOrg],
+    queryFn: () => api<LogEntry[]>(selectedOrg ? scopeJoin('/api/admin/logs?limit=100') : '/api/admin/logs?limit=100'),
     enabled: tab === 'logs',
   })
 
@@ -431,14 +487,18 @@ export default function Admin() {
   async function saveEmployee(e: React.FormEvent) {
     e.preventDefault()
     if (!editing) return
+    if (!editing.id && needsWriteScope) {
+      flashNotice('برای افزودن نفر، ابتدا واحد مقصد را انتخاب کنید', 4000)
+      return
+    }
     try {
       if (editing.id) {
-        await api(`/api/admin/employees/${editing.id}`, {
+        await api(selectedOrg ? scopeJoin(`/api/admin/employees/${editing.id}`) : `/api/admin/employees/${editing.id}`, {
           method: 'PATCH',
           body: JSON.stringify(editing),
         })
       } else {
-        await api('/api/admin/employees', {
+        await api(selectedOrg ? scopeJoin('/api/admin/employees') : '/api/admin/employees', {
           method: 'POST',
           body: JSON.stringify(editing),
         })
@@ -517,7 +577,7 @@ export default function Admin() {
 
   async function removeEmployee(id: number, name: string) {
     if (!confirm(`«${name}» حذف شود؟`)) return
-    await api(`/api/admin/employees/${id}`, { method: 'DELETE' })
+    await api(selectedOrg ? scopeJoin(`/api/admin/employees/${id}`) : `/api/admin/employees/${id}`, { method: 'DELETE' })
     qc.invalidateQueries({ queryKey: ['admin-employees'] })
   }
 
@@ -544,7 +604,7 @@ export default function Admin() {
   async function removeSelected() {
     setBulkBusy(true)
     try {
-      const res = await api<{ deleted: number }>('/api/admin/employees/bulk-delete', {
+      const res = await api<{ deleted: number }>(selectedOrg ? scopeJoin('/api/admin/employees/bulk-delete') : '/api/admin/employees/bulk-delete', {
         method: 'POST',
         body: JSON.stringify({ ids: chosen.map((p) => p.id) }),
       })
@@ -589,6 +649,11 @@ export default function Admin() {
   async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
+    if (needsWriteScope) {
+      flashNotice('برای ایمپورت، ابتدا واحد مقصد را انتخاب کنید', 4000)
+      e.target.value = ''
+      return
+    }
     setImporting(true)
     try {
       const fd = new FormData()
@@ -597,7 +662,7 @@ export default function Admin() {
         created: number
         updated: number
         errors: string[]
-      }>('/api/admin/import', { method: 'POST', body: fd })
+      }>(selectedOrg ? scopeJoin('/api/admin/import') : '/api/admin/import', { method: 'POST', body: fd })
 
       let msg = `ایمپورت انجام شد: ${faDigits(res.created)} نفر جدید، ${faDigits(res.updated)} نفر به‌روزرسانی`
       if (res.errors.length) msg += `\nخطاها:\n${res.errors.slice(0, 5).join('\n')}`
@@ -634,13 +699,16 @@ export default function Admin() {
     }
   }
 
-  async function toggleAdmin(u: AdminUser) {
-    const ask = u.is_admin
-      ? `دسترسی مدیریت از «${u.username}» گرفته شود؟`
-      : `«${u.username}» به پنل مدیریت دسترسی کامل پیدا کند؟`
-    if (!confirm(ask)) return
+  async function changeRole(u: AdminUser, role: AdminUser['role']) {
     try {
-      await api(`/api/admin/users/${u.id}/toggle-admin`, { method: 'POST' })
+      await api(`/api/admin/users/${u.id}/role`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          role,
+          manage_global_admins: role === 'HEAD_OFFICE_ACCESS_ADMIN' ? u.manage_global_admins : false,
+          can_delete_data: role === 'UNIT_MANAGER' || role === 'HEAD_OFFICE_ACCESS_ADMIN' || role === 'GLOBAL_ADMIN',
+        }),
+      })
       qc.invalidateQueries({ queryKey: ['admin-users'] })
     } catch (err) {
       flashNotice(err instanceof Error ? err.message : 'خطا در تغییر نقش', 4000)
@@ -671,16 +739,32 @@ export default function Admin() {
 
   async function addUser(e: React.FormEvent) {
     e.preventDefault()
+    if (needsWriteScope) {
+      flashNotice('برای ساخت حساب، ابتدا واحد مقصد را انتخاب کنید', 4000)
+      return
+    }
     try {
       const res = await api<{ username: string; temp_password: string }>('/api/admin/users', {
         method: 'POST',
-        body: JSON.stringify(newUser),
+        body: JSON.stringify({ ...newUser, organization_id: selectedOrg ? Number(selectedOrg) : undefined }),
       })
-      setNewUser({ username: '', is_admin: false })
+      setNewUser({ username: '', role: 'UNIT_USER', manage_global_admins: false, can_delete_data: false })
       setIssued({ username: res.username, temp_password: res.temp_password })
       qc.invalidateQueries({ queryKey: ['admin-users'] })
     } catch (err) {
       flashNotice(err instanceof Error ? err.message : 'خطا در ساخت کاربر', 4000)
+    }
+  }
+
+  async function addOrganization(e: React.FormEvent) {
+    e.preventDefault()
+    try {
+      await api('/api/admin/organizations', { method: 'POST', body: JSON.stringify(newOrg) })
+      setNewOrg({ name: '', code: '', kind: 'FACTORY' })
+      qc.invalidateQueries({ queryKey: ['organizations'] })
+      flashNotice('واحد سازمانی ساخته شد')
+    } catch (err) {
+      flashNotice(err instanceof Error ? err.message : 'ساخت واحد انجام نشد', 4000)
     }
   }
 
@@ -706,7 +790,13 @@ export default function Admin() {
           String(d.name ?? `#${l.entity_id ?? ''}`)
         : l.entity === 'user'
           ? String(d.username ?? users?.find((u) => u.id === l.entity_id)?.username ?? `#${l.entity_id ?? ''}`)
-          : String(d.file ?? 'فایل')
+          : l.entity === 'organization'
+            ? String(d.name ?? `واحد #${l.entity_id ?? ''}`)
+            : l.entity === 'auth'
+              ? String(d.username ?? 'ورود')
+              : l.entity === 'audit'
+                ? 'گزارش فعالیت‌ها'
+                : String(d.file ?? l.entity)
     return { ...l, ...describeLog(l, subject) }
   })
 
@@ -775,6 +865,22 @@ export default function Admin() {
           </div>
         </div>
 
+        <div className="mx-auto mt-5 flex w-full max-w-6xl flex-wrap items-center gap-3 px-5 sm:px-8">
+          <div className="rounded-xl border border-sand-200 bg-paper px-3 py-2 text-xs text-ink-600">
+            محدودهٔ فعال: <strong className="text-ink-900">{selectedOrg ? organizations?.find((org) => String(org.id) === selectedOrg)?.name : isGlobal ? 'همهٔ واحدها' : session?.organization_name || 'واحد شما'}</strong>
+            <span className="mx-2 text-ink-300">·</span>{session?.role}
+          </div>
+          {isGlobal && (
+            <label className="flex items-center gap-2 text-xs text-ink-500">
+              انتخاب واحد
+              <select value={selectedOrg} onChange={(event) => { setSelectedOrg(event.target.value); setSelected(new Set()) }} className="rounded-xl border border-sand-300 bg-paper px-3 py-2 text-sm text-ink-900">
+                <option value="">همهٔ واحدها</option>
+                {(organizations ?? []).filter((org) => org.is_active).map((org) => <option key={org.id} value={org.id}>{org.name}</option>)}
+              </select>
+            </label>
+          )}
+        </div>
+
         {/* تب‌ها با زیرخط متحرک */}
         <nav ref={navRef} className="admin-tabs relative mx-auto mt-6 flex w-full max-w-6xl gap-1 px-5 text-[14px] sm:px-8">
           {TABS.map(([key, label]) => (
@@ -806,11 +912,17 @@ export default function Admin() {
         <div ref={contentRef}>
           {tab === 'people' && (
             <>
+              {needsWriteScope && (
+                <p className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  حالت «همهٔ واحدها» فقط برای مشاهده است. برای افزودن یا ایمپورت، واحد مقصد را انتخاب کنید.
+                </p>
+              )}
               {/* toolbar */}
               <div className="flex flex-wrap items-center gap-3 mb-5">
                 <button
                   onClick={() => openEditor({ ...EMPTY })}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-deep-900 hover:bg-deep-800 text-white text-sm font-medium px-4 py-2.5 transition-colors duration-200 active:scale-[.97] dark:bg-sea-500 dark:text-deep-950 dark:hover:bg-sea-400"
+                  disabled={needsWriteScope}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-deep-900 hover:bg-deep-800 text-white text-sm font-medium px-4 py-2.5 transition-colors duration-200 active:scale-[.97] disabled:cursor-not-allowed disabled:opacity-45 dark:bg-sea-500 dark:text-deep-950 dark:hover:bg-sea-400"
                 >
                   <UserPlusIcon className="w-4 h-4" />
                   افزودن نفر
@@ -818,7 +930,7 @@ export default function Admin() {
 
                 <label
                   className={`inline-flex items-center gap-1.5 rounded-xl ring-1 ring-dashed ring-ink-300 hover:ring-sea-500 hover:text-tide text-ink-500 text-sm px-4 py-2.5 cursor-pointer transition-colors duration-200 ${
-                    importing ? 'opacity-50 pointer-events-none' : ''
+                    importing || needsWriteScope ? 'opacity-50 pointer-events-none' : ''
                   }`}
                 >
                   <UploadIcon className="w-4 h-4" />
@@ -835,6 +947,7 @@ export default function Admin() {
                   )}
                   <input
                     type="file"
+                    disabled={needsWriteScope}
                     accept=".xlsx,.xls,.csv"
                     onChange={handleImport}
                     className="hidden"
@@ -926,6 +1039,11 @@ export default function Admin() {
 
           {tab === 'users' && (
             <>
+            {needsWriteScope && (
+              <p className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                برای ساخت حساب، واحد مقصد را از بالای صفحه انتخاب کنید.
+              </p>
+            )}
             {/* ساخت حسابِ تازه. رمز نمی‌گیرد — سرور رمزِ موقت می‌سازد و
                 همان یک‌بار نشانش می‌دهد. پیش‌فرض کاربرِ عادی است؛ دسترسیِ
                 مدیریت باید صریح تیک بخورد. */}
@@ -942,18 +1060,39 @@ export default function Admin() {
                   className="w-full rounded-xl border border-sand-300 bg-sand-50/60 px-3 py-2 text-left text-sm text-ink-900 transition-colors focus:border-sea-500 focus:bg-paper focus:outline-none focus:ring-2 focus:ring-sea-500/20"
                 />
               </div>
+              <label className="flex flex-col gap-1 text-xs font-medium text-ink-500">
+                نقش
+                <select
+                  value={newUser.role}
+                  onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}
+                  className="rounded-xl border border-sand-300 bg-paper px-3 py-2 text-sm text-ink-900"
+                >
+                  <option value="UNIT_USER">کاربر واحد</option>
+                  <option value="UNIT_MANAGER">مسئول واحد</option>
+                  {session?.manage_global_admins && <option value="HEAD_OFFICE_ACCESS_ADMIN">مدیر دسترسی دفتر مرکزی</option>}
+                  {session?.manage_global_admins && <option value="GLOBAL_ADMIN">مدیر کل سامانه</option>}
+                </select>
+              </label>
               <label className="flex cursor-pointer select-none items-center gap-2 py-2.5 text-sm text-ink-700">
                 <input
                   type="checkbox"
-                  checked={newUser.is_admin}
-                  onChange={(e) => setNewUser({ ...newUser, is_admin: e.target.checked })}
+                  checked={newUser.can_delete_data}
+                  onChange={(e) => setNewUser({ ...newUser, can_delete_data: e.target.checked })}
                   className="pick"
                 />
-                دسترسی مدیریت
+                مجوز حذف داده
               </label>
+              {session?.manage_global_admins && (
+                <label className="flex cursor-pointer select-none items-center gap-2 py-2.5 text-sm text-ink-700">
+                  <input type="checkbox" checked={newUser.manage_global_admins}
+                    onChange={(e) => setNewUser({ ...newUser, manage_global_admins: e.target.checked })} className="pick" />
+                  manage_global_admins
+                </label>
+              )}
               <button
                 type="submit"
-                className="inline-flex items-center gap-1.5 rounded-xl bg-sea-500 px-4 py-2.5 text-sm font-medium text-white transition-colors duration-200 hover:bg-sea-600 active:scale-[.98] dark:text-deep-950 dark:hover:bg-sea-400"
+                disabled={needsWriteScope}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-sea-500 px-4 py-2.5 text-sm font-medium text-white transition-colors duration-200 hover:bg-sea-600 active:scale-[.98] disabled:cursor-not-allowed disabled:opacity-45 dark:text-deep-950 dark:hover:bg-sea-400"
               >
                 <UserPlusIcon className="h-4 w-4" />
                 افزودن حساب
@@ -996,11 +1135,14 @@ export default function Admin() {
                       </td>
 
                       <td className="px-4 py-3 text-xs">
-                        {u.is_admin ? (
-                          <span className="font-medium text-tide">مدیر</span>
-                        ) : (
-                          <span className="text-ink-400">کاربر</span>
-                        )}
+                        <select value={u.role} onChange={(event) => changeRole(u, event.target.value as AdminUser['role'])}
+                          className="rounded-lg border border-sand-200 bg-paper px-2 py-1 text-xs text-ink-900">
+                          <option value="UNIT_USER">کاربر واحد</option>
+                          <option value="UNIT_MANAGER">مسئول واحد</option>
+                          {session?.manage_global_admins && <option value="HEAD_OFFICE_ACCESS_ADMIN">مدیر دسترسی دفتر مرکزی</option>}
+                          {session?.manage_global_admins && <option value="GLOBAL_ADMIN">مدیر کل سامانه</option>}
+                        </select>
+                        {u.role === 'GLOBAL_ADMIN' && <span className="ms-2 text-[10px] text-tide">MFA {u.mfa_enabled ? 'فعال' : 'در انتظار'}</span>}
                       </td>
 
                       <td className="px-4 py-3 text-xs">
@@ -1024,12 +1166,6 @@ export default function Admin() {
                           رمز موقت
                         </button>
                         <button
-                          onClick={() => toggleAdmin(u)}
-                          className="text-ink-500 hover:text-ink-900 hover:underline underline-offset-4 text-xs ml-3"
-                        >
-                          {u.is_admin ? 'سلبِ مدیریت' : 'دادنِ مدیریت'}
-                        </button>
-                        <button
                           onClick={() => toggleActive(u.id)}
                           className="text-ink-500 hover:text-ink-900 hover:underline underline-offset-4 text-xs"
                         >
@@ -1045,6 +1181,39 @@ export default function Admin() {
               )}
             </div>
             </>
+          )}
+
+          {tab === 'organizations' && (
+            <div className="flex flex-col gap-4">
+              {isGlobal && (
+                <form onSubmit={addOrganization} className="flex flex-wrap items-end gap-3 rounded-2xl border border-sand-200 bg-paper p-4">
+                  <label className="flex min-w-48 flex-1 flex-col gap-1 text-xs font-medium text-ink-500">نام واحد
+                    <input value={newOrg.name} onChange={(e) => setNewOrg({ ...newOrg, name: e.target.value })}
+                      className="rounded-xl border border-sand-300 bg-sand-50 px-3 py-2 text-sm text-ink-900" required />
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs font-medium text-ink-500">کد
+                    <input dir="ltr" value={newOrg.code} onChange={(e) => setNewOrg({ ...newOrg, code: e.target.value })}
+                      className="rounded-xl border border-sand-300 bg-sand-50 px-3 py-2 text-sm text-ink-900" required />
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs font-medium text-ink-500">نوع
+                    <select value={newOrg.kind} onChange={(e) => setNewOrg({ ...newOrg, kind: e.target.value })}
+                      className="rounded-xl border border-sand-300 bg-paper px-3 py-2 text-sm text-ink-900">
+                      <option value="FACTORY">کارخانه</option><option value="HEAD_OFFICE">دفتر مرکزی</option>
+                    </select>
+                  </label>
+                  <button type="submit" className="rounded-xl bg-deep-900 px-4 py-2.5 text-sm font-medium text-white">ایجاد واحد</button>
+                </form>
+              )}
+              <div className="overflow-hidden rounded-2xl border border-sand-200 bg-paper">
+                {(organizations ?? []).map((org) => (
+                  <article key={org.id} data-row className="flex items-center gap-4 border-t border-sand-100 px-4 py-4 first:border-0">
+                    <div className="min-w-0 flex-1"><p className="font-medium text-ink-900">{org.name}</p><p dir="ltr" className="mt-1 text-xs text-ink-400">{org.code}</p></div>
+                    <span className="text-xs text-ink-500">{org.kind === 'HEAD_OFFICE' ? 'دفتر مرکزی' : 'کارخانه'}</span>
+                    <span className={org.is_active ? 'text-xs text-sea-600' : 'text-xs text-red-500'}>{org.is_active ? 'فعال' : 'غیرفعال'}</span>
+                  </article>
+                ))}
+              </div>
+            </div>
           )}
 
           {tab === 'logs' && (

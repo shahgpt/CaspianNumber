@@ -1,12 +1,26 @@
-"""SQLAlchemy models: users, employees, change log."""
+"""Database models for organization-scoped identity, directory data and audit."""
+from __future__ import annotations
+
 import secrets
 
-from sqlalchemy import (JSON, Boolean, Column, DateTime, Integer, String, Text,
-                        create_engine)
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy import (
+    JSON, Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text,
+    create_engine, event, text,
+)
+from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
 from sqlalchemy.sql import func
 
 from .core.config import settings
+
+ROLE_UNIT_USER = "UNIT_USER"
+ROLE_UNIT_MANAGER = "UNIT_MANAGER"
+ROLE_HEAD_OFFICE_ACCESS_ADMIN = "HEAD_OFFICE_ACCESS_ADMIN"
+ROLE_GLOBAL_ADMIN = "GLOBAL_ADMIN"
+VALID_ROLES = {ROLE_UNIT_USER, ROLE_UNIT_MANAGER, ROLE_HEAD_OFFICE_ACCESS_ADMIN, ROLE_GLOBAL_ADMIN}
+
+ORG_HEAD_OFFICE = "HEAD_OFFICE"
+ORG_FACTORY = "FACTORY"
+VALID_ORGANIZATION_TYPES = {ORG_HEAD_OFFICE, ORG_FACTORY}
 
 
 class Base(DeclarativeBase):
@@ -17,65 +31,92 @@ engine = create_engine(
     settings.DATABASE_URL,
     connect_args={"check_same_thread": False} if settings.DATABASE_URL.startswith("sqlite") else {},
 )
-SessionLocal = sessionmaker(bind=engine, autoflush=False)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+
+
+if engine.url.drivername.startswith("sqlite"):
+    @event.listens_for(engine, "connect")
+    def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+
+class Organization(Base):
+    __tablename__ = "organizations"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(128), nullable=False, unique=True)
+    code = Column(String(32), nullable=False, unique=True, index=True)
+    kind = Column(String(24), nullable=False, default=ORG_FACTORY)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class User(Base):
-    """حسابِ ورود — بدونِ آن هیچ‌چیزِ دفترچه دیده نمی‌شود.
-
-    دو سطح بیشتر نداریم: کاربرِ عادی که فقط دفترچه را می‌خواند، و ادمین
-    که پنلِ مدیریت را هم دارد. حسابِ تازه پیش‌فرض کاربرِ عادی است؛ ادمین
-    شدن باید صریح باشد.
-    """
-
     __tablename__ = "users"
+    __table_args__ = (Index("ix_users_organization_role", "organization_id", "role"),)
 
     id = Column(Integer, primary_key=True)
     username = Column(String(64), unique=True, index=True, nullable=False)
-    # فقط هش نگه داشته می‌شود. رمزِ خوانا هیچ‌جا ذخیره نمی‌شود — رمزِ موقتی
-    # که ادمین می‌سازد یک‌بار در همان پاسخِ API دیده می‌شود و تمام.
     password_hash = Column(String(255), nullable=False)
-    is_active = Column(Boolean, default=True)
-    is_admin = Column(Boolean, default=False, nullable=False)
-    # تا وقتی کاربر رمزِ موقت را عوض نکرده، فقط اجازه‌ی دیدن نشست و
-    # فراخوانی endpoint تغییر رمز را دارد. این وضعیت باید در دیتابیس باشد؛
-    # از روی هشِ رمز نمی‌شود موقتی‌بودن را با اطمینان تشخیص داد.
+    organization_id = Column(Integer, ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, default=1, index=True)
+    role = Column(String(40), nullable=False, default=ROLE_UNIT_USER)
+    is_active = Column(Boolean, default=True, nullable=False)
     must_change_password = Column(Boolean, default=False, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    manage_global_admins = Column(Boolean, default=False, nullable=False)
+    can_delete_data = Column(Boolean, default=False, nullable=False)
+    token_version = Column(Integer, default=0, nullable=False)
+    mfa_enabled = Column(Boolean, default=False, nullable=False)
+    mfa_secret_enc = Column(Text, nullable=True)
+    mfa_recovery_hashes = Column(JSON, nullable=False, default=list)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    organization = relationship("Organization")
+
+    @property
+    def is_admin(self) -> bool:
+        """Compatibility field used by older clients and tests."""
+        return self.role in {ROLE_UNIT_MANAGER, ROLE_HEAD_OFFICE_ACCESS_ADMIN, ROLE_GLOBAL_ADMIN}
+
+    @is_admin.setter
+    def is_admin(self, value: bool) -> None:
+        self.role = ROLE_UNIT_MANAGER if value else ROLE_UNIT_USER
+
+    @property
+    def is_global_admin(self) -> bool:
+        return self.role == ROLE_GLOBAL_ADMIN
 
 
 class Employee(Base):
     __tablename__ = "employees"
+    __table_args__ = (Index("ix_employees_org_last_name", "organization_id", "last_name", "id"),)
 
     id = Column(Integer, primary_key=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, default=1, index=True)
     first_name = Column(String(64), default="")
     last_name = Column(String(64), default="")
     latin_name = Column(String(128), default="")
-
-    # شماره‌ی مستقیم: خطی که کاربر از موبایلش مستقیم می‌گیرد و به همان
-    # داخلی می‌رسد. اگر خالی بماند از روی داخلی ساخته می‌شود.
     direct_number = Column(String(32), default="")
     extension = Column(String(16), default="")
     phone = Column(String(32), default="")
     email = Column(String(128), default="")
-
     department = Column(String(64), default="")
     company = Column(String(128), default="")
     job_title = Column(String(128), default="")
     location = Column(Text, default="")
-
     photo_url = Column(String(255), default="")
-    keywords = Column(Text, default="")  # aliases & work keywords
+    keywords = Column(Text, default="")
     skills = Column(Text, default="")
     languages = Column(String(128), default="")
     working_hours = Column(String(128), default="")
     notes = Column(Text, default="")
-
-    # normalized search corpus
     search_text = Column(Text, default="", index=True)
-
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    organization = relationship("Organization")
 
     @property
     def full_name(self) -> str:
@@ -83,61 +124,61 @@ class Employee(Base):
 
     @property
     def direct(self) -> str:
-        """شماره‌ی مستقیم برای نمایش — ثبت‌شده، وگرنه ساخته‌شده از داخلی."""
         return (self.direct_number or "").strip() or direct_from_extension(self.extension)
 
     def sync_direct_number(self) -> None:
-        """داخلی که هست و مستقیم که خالی است، خودش پر می‌شود."""
         if not (self.direct_number or "").strip():
             self.direct_number = direct_from_extension(self.extension)
 
     def rebuild_search_text(self) -> None:
         from .core.persian import normalize
 
-        parts = [
-            self.first_name, self.last_name, self.latin_name,
-            self.department, self.company, self.job_title,
-            self.keywords, self.skills, self.location, self.notes,
-            self.direct_number, self.extension, self.phone, self.email,
-        ]
+        parts = [self.first_name, self.last_name, self.latin_name, self.department,
+                 self.company, self.job_title, self.keywords, self.skills, self.location,
+                 self.notes, self.direct_number, self.extension, self.phone, self.email]
         self.search_text = " ".join(normalize(p) for p in parts if p)
 
 
-def direct_from_extension(extension: str | None) -> str:
-    """۲۱۸ -> 02144218 — پیش‌شماره‌ی سازمان به داخلی می‌چسبد."""
-    from .core.persian import normalize_keep_digits
-
-    ext = normalize_keep_digits(extension or "")
-    if not ext:
-        return ""
-    return f"{normalize_keep_digits(settings.DIRECT_PREFIX)}{ext}"
-
-
 class ChangeLog(Base):
+    """Append-only audit trail; the legacy table name is retained for upgrades."""
     __tablename__ = "change_log"
+    __table_args__ = (
+        Index("ix_audit_org_at", "organization_id", "at"),
+        Index("ix_audit_actor_at", "actor_id", "at"),
+    )
 
     id = Column(Integer, primary_key=True)
-    entity = Column(String(32))          # employee | user | import
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
+    entity = Column(String(32), nullable=False, default="system")
     entity_id = Column(Integer)
-    action = Column(String(16))          # create | update | delete | import
-    actor_id = Column(Integer)
-    actor_name = Column(String(64))
+    action = Column(String(40), nullable=False)
+    actor_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    actor_name = Column(String(64), nullable=False, default="system")
+    actor_role = Column(String(40), nullable=True)
+    target_user_id = Column(Integer, nullable=True)
+    role_before = Column(String(40), nullable=True)
+    role_after = Column(String(40), nullable=True)
+    ip_address = Column(String(64), nullable=True)
+    user_agent = Column(String(255), nullable=True)
     details = Column(JSON, nullable=True)
-    at = Column(DateTime(timezone=True), server_default=func.now())
+    at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
-def gen_password(length: int = 8) -> str:
-    alphabet = "abcdefghjkmnpqrstuvwxyz23456789"
+def direct_from_extension(extension: str | None) -> str:
+    from .core.persian import normalize_keep_digits
+    ext = normalize_keep_digits(extension or "")
+    return f"{normalize_keep_digits(settings.DIRECT_PREFIX)}{ext}" if ext else ""
+
+
+def gen_password(length: int = 12) -> str:
+    alphabet = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789!@#$%"
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
-# رمزهای موقتی با این پیشوند ساخته می‌شوند تا ورود بتواند بشناسدشان و
-# کاربر را سرِ اولین ورود پای تغییر رمز بنشاند (auth.login).
 TEMP_PASSWORD_PREFIX = "tmp-"
 
 
 def gen_temp_password() -> str:
-    """رمزِ یک‌بارمصرفِ ادمین‌ساخته — فقط همان لحظه دیده می‌شود."""
     return f"{TEMP_PASSWORD_PREFIX}{gen_password()}"
 
 
@@ -145,98 +186,54 @@ def is_temp_password(raw: str) -> bool:
     return (raw or "").startswith(TEMP_PASSWORD_PREFIX)
 
 
+def _sqlite_columns(conn, table: str) -> set[str]:
+    return {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))}
+
+
+def _add_sqlite_column(conn, table: str, columns: set[str], name: str, ddl: str) -> None:
+    if name not in columns:
+        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+        columns.add(name)
+
+
 def _migrate_sqlite() -> None:
-    """مهاجرت‌های کوچکِ درجا — پروژه Alembic ندارد و لازم هم نداشت.
-
-    ۱) ستون‌های تازه اضافه می‌شوند اگر نبودند.
-    ۲) «موبایل» جای خود را به «شماره‌ی مستقیم» می‌دهد: مقدارِ قبلی دور
-       ریخته می‌شود چون شماره‌ی شخصی بود، نه شماره‌ی سازمانی — و مستقیم
-       از روی داخلی دوباره ساخته می‌شود.
-    ۳) ستونِ رمزِ خوانا برداشته می‌شود؛ رمزها فقط هش می‌مانند.
-    ۴) نقشِ رشته‌ای برداشته می‌شود و جایش `is_admin` می‌نشیند.
-    ۵) وضعیتِ اجبار به تغییر رمز اضافه می‌شود.
-    """
-    from sqlalchemy import text
-
+    """Idempotent bridge for installations created before Alembic was added."""
     with engine.begin() as conn:
-        emp_cols = {r[1] for r in conn.execute(text("PRAGMA table_info(employees)"))}
+        conn.execute(text("INSERT OR IGNORE INTO organizations(id,name,code,kind,is_active) VALUES (1,'دفتر مرکزی','HEAD','HEAD_OFFICE',1)"))
+
+        emp_cols = _sqlite_columns(conn, "employees")
         if emp_cols:
-            if "direct_number" not in emp_cols:
-                conn.execute(text("ALTER TABLE employees ADD COLUMN direct_number VARCHAR(32) DEFAULT ''"))
-            if "mobile" in emp_cols:
-                conn.execute(text("ALTER TABLE employees DROP COLUMN mobile"))
+            _add_sqlite_column(conn, "employees", emp_cols, "organization_id", "INTEGER NOT NULL DEFAULT 1")
+            _add_sqlite_column(conn, "employees", emp_cols, "direct_number", "VARCHAR(32) DEFAULT ''")
 
-        user_cols = {r[1] for r in conn.execute(text("PRAGMA table_info(users)"))}
-        if "password_plain" in user_cols:
-            # اول مقدارها را پاک می‌کنیم بعد ستون را برمی‌داریم: اگر
-            # DROP COLUMN روی SQLiteی قدیمی (<3.35) نگیرد، دست‌کم رمزِ
-            # خوانایی در فایل باقی نمانده باشد.
-            conn.execute(text("UPDATE users SET password_plain = ''"))
-            try:
-                conn.execute(text("ALTER TABLE users DROP COLUMN password_plain"))
-            except Exception:
-                pass  # ستونِ خالیِ بلااستفاده می‌ماند — مدل دیگر نمی‌شناسدش
-            user_cols = {r[1] for r in conn.execute(text("PRAGMA table_info(users)"))}
+        user_cols = _sqlite_columns(conn, "users")
+        if user_cols:
+            _add_sqlite_column(conn, "users", user_cols, "organization_id", "INTEGER NOT NULL DEFAULT 1")
+            _add_sqlite_column(conn, "users", user_cols, "role", "VARCHAR(40) NOT NULL DEFAULT 'UNIT_USER'")
+            _add_sqlite_column(conn, "users", user_cols, "manage_global_admins", "BOOLEAN NOT NULL DEFAULT 0")
+            _add_sqlite_column(conn, "users", user_cols, "can_delete_data", "BOOLEAN NOT NULL DEFAULT 0")
+            _add_sqlite_column(conn, "users", user_cols, "token_version", "INTEGER NOT NULL DEFAULT 0")
+            _add_sqlite_column(conn, "users", user_cols, "mfa_enabled", "BOOLEAN NOT NULL DEFAULT 0")
+            _add_sqlite_column(conn, "users", user_cols, "mfa_secret_enc", "TEXT")
+            _add_sqlite_column(conn, "users", user_cols, "mfa_recovery_hashes", "JSON NOT NULL DEFAULT '[]'")
+            _add_sqlite_column(conn, "users", user_cols, "must_change_password", "BOOLEAN NOT NULL DEFAULT 0")
+            _add_sqlite_column(conn, "users", user_cols, "updated_at", "DATETIME")
+            if "is_admin" in user_cols:
+                conn.execute(text("UPDATE users SET role='UNIT_MANAGER', can_delete_data=1 WHERE is_admin=1 AND role='UNIT_USER'"))
 
-        if "role" in user_cols or "employee_id" in user_cols:
-            _drop_non_admin_accounts(conn)
-            user_cols = {r[1] for r in conn.execute(text("PRAGMA table_info(users)"))}
-
-        if "is_admin" not in user_cols:
-            # پیش از این مهاجرت، «حساب داشتن» یعنی ادمین بودن — پس هرکه
-            # حساب دارد ادمین می‌ماند، وگرنه کسی به پنل راه ندارد.
-            conn.execute(text("ALTER TABLE users ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT 0"))
-            conn.execute(text("UPDATE users SET is_admin = 1"))
-
-        if "must_change_password" not in user_cols:
-            # حساب‌های قدیمی دائمی فرض می‌شوند. اگر رمزِ قدیمی واقعاً موقت
-            # باشد، login با دیدن پیشوند tmp- همین پرچم را روشن می‌کند.
-            conn.execute(text(
-                "ALTER TABLE users ADD COLUMN must_change_password "
-                "BOOLEAN NOT NULL DEFAULT 0"
-            ))
-
-
-def _drop_non_admin_accounts(conn) -> None:
-    """ستونِ `role` برداشته می‌شود و فقط ادمین‌ها می‌مانند.
-
-    حساب‌های `employee`/`hr` آن دوره هیچ اجازه‌ای نمی‌دادند (دفترچه ورود
-    نمی‌خواست) و رمزشان هم دستِ کسی نیست؛ پس نگه‌داشتنشان بی‌معناست.
-    حساب‌های تازه‌ی کارمندی از پنل ساخته می‌شوند.
-
-    این فقط ردیفِ ورود را می‌برد: جدولِ `employees` — یعنی خودِ دفترچه و
-    همه‌ی شماره‌ها — دست نمی‌خورد.
-
-    ستونِ `employee_id` کلید خارجی دارد و SQLite نمی‌گذارد مستقیم DROP
-    شود، پس جدول از نو ساخته می‌شود.
-    """
-    from sqlalchemy import text
-
-    kept = conn.execute(text("SELECT count(*) FROM users WHERE role = 'admin'")).scalar()
-    dropped = conn.execute(text("SELECT count(*) FROM users WHERE role != 'admin'")).scalar()
-
-    conn.execute(text("""
-        CREATE TABLE users_new (
-            id INTEGER NOT NULL PRIMARY KEY,
-            username VARCHAR(64) NOT NULL,
-            password_hash VARCHAR(255) NOT NULL,
-            is_active BOOLEAN,
-            created_at DATETIME
-        )
-    """))
-    conn.execute(text("""
-        INSERT INTO users_new (id, username, password_hash, is_active, created_at)
-        SELECT id, username, password_hash, is_active, created_at
-        FROM users WHERE role = 'admin'
-    """))
-    conn.execute(text("DROP TABLE users"))
-    conn.execute(text("ALTER TABLE users_new RENAME TO users"))
-    conn.execute(text("CREATE UNIQUE INDEX ix_users_username ON users (username)"))
-    print(f"[migrate] حساب‌ها فقط ادمین شدند — {kept} ماند، {dropped} حسابِ کارمندی حذف شد")
+        log_cols = _sqlite_columns(conn, "change_log")
+        if log_cols:
+            _add_sqlite_column(conn, "change_log", log_cols, "organization_id", "INTEGER")
+            _add_sqlite_column(conn, "change_log", log_cols, "actor_role", "VARCHAR(40)")
+            _add_sqlite_column(conn, "change_log", log_cols, "target_user_id", "INTEGER")
+            _add_sqlite_column(conn, "change_log", log_cols, "role_before", "VARCHAR(40)")
+            _add_sqlite_column(conn, "change_log", log_cols, "role_after", "VARCHAR(40)")
+            _add_sqlite_column(conn, "change_log", log_cols, "ip_address", "VARCHAR(64)")
+            _add_sqlite_column(conn, "change_log", log_cols, "user_agent", "VARCHAR(255)")
+            conn.execute(text("UPDATE change_log SET organization_id=1 WHERE organization_id IS NULL"))
 
 
 def backfill_direct_numbers() -> None:
-    """هر کسی که داخلی دارد و مستقیمش خالی است، شماره‌اش ساخته می‌شود."""
     db = SessionLocal()
     try:
         changed = False
@@ -254,7 +251,6 @@ def backfill_direct_numbers() -> None:
 
 def reindex_fts() -> int:
     from . import fts
-
     db = SessionLocal()
     try:
         return fts.reindex_all(db)
@@ -263,10 +259,8 @@ def reindex_fts() -> int:
 
 
 def init_db() -> None:
-    # make sure the sqlite folder exists (first run on a fresh clone)
     if engine.url.drivername.startswith("sqlite"):
         import os
-
         db_path = engine.url.database
         if db_path:
             os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
@@ -277,4 +271,4 @@ def init_db() -> None:
     try:
         reindex_fts()
     except Exception:
-        pass  # FTS اختیاری است — LIKE fallback داریم
+        pass

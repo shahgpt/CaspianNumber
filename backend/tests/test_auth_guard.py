@@ -104,11 +104,13 @@ def test_temporary_password_blocks_app_until_it_is_changed():
             json={"current_password": temp_password, "new_password": "my-new-password"},
         )
         assert changed.status_code == 200, changed.text
-        assert client.get("/api/auth/me", headers=_auth(token)).json()[
+        replacement_token = changed.json()["access_token"]
+        assert client.get("/api/auth/me", headers=_auth(token)).status_code == 401
+        assert client.get("/api/auth/me", headers=_auth(replacement_token)).json()[
             "must_change_password"
         ] is False
-        assert client.get("/api/employees", headers=_auth(token)).status_code == 200
-        assert client.get("/api/admin/users", headers=_auth(token)).status_code == 200
+        assert client.get("/api/employees", headers=_auth(replacement_token)).status_code == 200
+        assert client.get("/api/admin/users", headers=_auth(replacement_token)).status_code == 200
 
         assert client.post(
             "/api/auth/login",

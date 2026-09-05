@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useInfiniteQuery } from '@tanstack/react-query'
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import gsap from 'gsap'
 import { Link } from 'react-router-dom'
 import { ChevronDown, LogOut, ShieldCheck } from 'lucide-react'
@@ -28,16 +28,23 @@ export default function Directory() {
   const [q, setQ] = useState('')
   const [query, setQuery] = useState('')
   // نقش را سرور تأیید می‌کند؛ اینجا فقط تصمیمِ نمایش گرفته می‌شود
-  const { isAdmin } = useSession()
+  const { isAdmin, session } = useSession()
+  const isGlobal = session?.role === 'GLOBAL_ADMIN'
+  const [selectedOrg, setSelectedOrg] = useState('')
+  const { data: organizations } = useQuery({
+    queryKey: ['organizations'],
+    queryFn: () => api<Array<{ id: number; name: string; is_active: boolean }>>('/api/admin/organizations'),
+    enabled: isGlobal,
+  })
 
   /* فهرست صفحه‌صفحه پایین می‌آید: هر بار که ته فهرست به کادرِ دید نزدیک
      می‌شود، یک تراز عمیق‌تر خوانده می‌شود. صفحه‌ی ناقص یعنی ته رسیده‌ایم. */
   const { data, isFetching, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useInfiniteQuery({
-      queryKey: ['employees', query],
+      queryKey: ['employees', query, selectedOrg],
       queryFn: ({ pageParam }) =>
         api<Employee[]>(
-          `/api/employees?q=${encodeURIComponent(query)}&limit=${PAGE}&offset=${pageParam}`,
+          `/api/employees?q=${encodeURIComponent(query)}&limit=${PAGE}&offset=${pageParam}${selectedOrg ? `&organization_id=${selectedOrg}` : ''}`,
         ),
       initialPageParam: 0,
       getNextPageParam: (last, pages) =>
@@ -445,6 +452,19 @@ export default function Directory() {
             </div>
           </div>
 
+          <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-ink-500">
+            <span className="rounded-xl border border-sand-200 bg-paper px-3 py-2">
+              محدودهٔ داده: <strong className="text-ink-900">{selectedOrg ? organizations?.find((org) => String(org.id) === selectedOrg)?.name : isGlobal ? 'همهٔ واحدها' : session?.organization_name || 'واحد شما'}</strong>
+            </span>
+            {isGlobal && (
+              <select aria-label="انتخاب واحد سازمانی" value={selectedOrg} onChange={(event) => setSelectedOrg(event.target.value)}
+                className="rounded-xl border border-sand-300 bg-paper px-3 py-2 text-sm text-ink-900">
+                <option value="">همهٔ واحدها</option>
+                {(organizations ?? []).filter((org) => org.is_active).map((org) => <option key={org.id} value={org.id}>{org.name}</option>)}
+              </select>
+            )}
+          </div>
+
           {/* مقیاسِ نقشه — مرزِ عنوان با ابزار، امضای مشترک با صفحه‌ی ورود */}
           <svg
             ref={ruleRef}
@@ -482,6 +502,7 @@ export default function Directory() {
                 همان جستجوی متنِ خام است، مثل قبل */}
             <EmployeeAutocomplete
               value={q}
+              organizationId={selectedOrg}
               onValueChange={changeSearchText}
               onSearch={search}
               busy={isFetching && !isFetchingNextPage}

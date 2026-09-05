@@ -6,13 +6,19 @@ import { api, clearToken, getToken } from './api'
    برای «اجازه دادن». تصمیمِ دسترسی همیشه با پاسخِ سرور گرفته می‌شود،
    چون localStorage را خودِ کاربر با یک خط در کنسول عوض می‌کند. */
 
-/* هر کارمند حسابِ خودش را دارد؛ دفترچه بدون ورود باز نمی‌شود.
-   `is_admin` تنها تفاوت است: پنلِ مدیریت. */
+/* هر کارمند حسابِ خودش را دارد؛ دفترچه بدون ورود باز نمی‌شود. نقش و
+   مجوزهای ریزدانه از سرور می‌آیند و is_admin فقط سازگاری رابط قدیمی است. */
 export interface Session {
   id: number
   username: string
   is_active: boolean
   is_admin: boolean
+  organization_id: number
+  organization_name: string
+  role: 'UNIT_USER' | 'UNIT_MANAGER' | 'HEAD_OFFICE_ACCESS_ADMIN' | 'GLOBAL_ADMIN'
+  manage_global_admins: boolean
+  can_delete_data: boolean
+  mfa_enabled: boolean
   must_change_password: boolean
 }
 
@@ -28,8 +34,8 @@ export function forgetSession() {
 }
 
 /**
- * نشست را از سرور می‌پرسد. بدون توکن اصلاً درخواستی نمی‌رود (دفترچه
- * برای همه باز است و نباید بابت مهمان‌ها رفت‌وبرگشت بی‌خود بدهیم).
+ * نشست را از سرور می‌پرسد. بدون توکن اصلاً درخواستی نمی‌رود؛ مهمان
+ * مستقیماً به صفحهٔ ورود هدایت می‌شود.
  * توکنِ منقضی یا دستکاری‌شده ⇒ null و پاک‌سازیِ نشستِ کهنه.
  */
 export async function fetchSession(): Promise<Session | null> {

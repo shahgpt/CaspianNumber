@@ -101,7 +101,10 @@ def _score(employee: Employee, terms: list[str], raw_query: str) -> int:
     return score
 
 
-def search_employees(db: Session, query: str, limit: int = 30, offset: int = 0):
+def search_employees(
+    db: Session, query: str, limit: int = 30, offset: int = 0,
+    organization_id: int | None = None,
+):
     q = (query or "").strip()
     if not q:
         return []
@@ -111,9 +114,12 @@ def search_employees(db: Session, query: str, limit: int = 30, offset: int = 0):
     digits = normalize_keep_digits(q)
 
     # candidate pre-filter: FTS5 (BM25-ranked) when available, LIKE otherwise
-    ids = fts.fts_search_ids(db, terms, digits)
+    ids = fts.fts_search_ids(db, terms, digits, organization_id=organization_id)
     if ids:
-        by_id = {e.id: e for e in db.query(Employee).filter(Employee.id.in_(ids)).all()}
+        scoped = db.query(Employee).filter(Employee.id.in_(ids))
+        if organization_id is not None:
+            scoped = scoped.filter(Employee.organization_id == organization_id)
+        by_id = {e.id: e for e in scoped.all()}
         candidates = [by_id[i] for i in ids if i in by_id]
     else:
         filters = []
@@ -125,9 +131,11 @@ def search_employees(db: Session, query: str, limit: int = 30, offset: int = 0):
             # pure-stopword query: fall back to raw substring
             filters.append(Employee.search_text.ilike(f"%{norm_q}%"))
 
+        candidate_query = db.query(Employee).filter(or_(*filters))
+        if organization_id is not None:
+            candidate_query = candidate_query.filter(Employee.organization_id == organization_id)
         candidates = (
-            db.query(Employee)
-            .filter(or_(*filters))
+            candidate_query
             .limit(300)
             .all()
         )

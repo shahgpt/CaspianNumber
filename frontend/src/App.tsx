@@ -1,11 +1,12 @@
-import { useEffect, useLayoutEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useLayoutEffect, useState } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
-import Login from './pages/Login'
-import Directory from './pages/Directory'
-import Admin from './pages/Admin'
 import ForcePasswordChange from './components/ForcePasswordChange'
 import { getToken } from './lib/api'
 import { fetchSession, type Session } from './lib/auth'
+
+const Login = lazy(() => import('./pages/Login'))
+const Directory = lazy(() => import('./pages/Directory'))
+const Admin = lazy(() => import('./pages/Admin'))
 
 /* دفترچه پشتِ ورود است: هر کارمند حسابِ خودش را دارد و بدون آن هیچ
    شماره‌ای دیده نمی‌شود. `/login` دروازه‌ی همه است، نه فقط مدیر. */
@@ -103,7 +104,7 @@ export default function App() {
   return (
     <>
       <ScrollToTop />
-      <Routes>
+      <Suspense fallback={<GateSplash />}><Routes>
         <Route path="/login" element={<Login />} />
         <Route
           path="/"
@@ -122,7 +123,7 @@ export default function App() {
           }
         />
         <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      </Routes></Suspense>
     </>
   )
 }

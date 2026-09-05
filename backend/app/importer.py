@@ -190,20 +190,23 @@ def _parse_rows(rows) -> list[dict]:
     return records
 
 
-def _find_existing(db: Session, rec: dict) -> Employee | None:
+def _find_existing(db: Session, rec: dict, organization_id: int) -> Employee | None:
     for f in KEY_FIELDS:
         val = (rec.get(f) or "").strip()
         if not val:
             continue
         col = getattr(Employee, f)
-        emp = db.query(Employee).filter(col == val).first()
+        emp = db.query(Employee).filter(
+            Employee.organization_id == organization_id, col == val
+        ).first()
         if emp:
             return emp
     fn, ln = rec.get("first_name", ""), rec.get("last_name", "")
     if fn and ln:
         emp = (
             db.query(Employee)
-            .filter(Employee.first_name == fn, Employee.last_name == ln)
+            .filter(Employee.organization_id == organization_id,
+                    Employee.first_name == fn, Employee.last_name == ln)
             .first()
         )
         if emp:
@@ -211,12 +214,13 @@ def _find_existing(db: Session, rec: dict) -> Employee | None:
     return None
 
 
-def apply_import(db: Session, records: list[dict], actor) -> dict:
+def apply_import(db: Session, records: list[dict], actor, organization_id: int | None = None) -> dict:
     """ایمپورت فقط دفترچه را پر می‌کند — حسابِ ورود نمی‌سازد.
 
     دفترچه ورود نمی‌خواهد، پس پرسنل حساب لازم ندارند؛ حساب فقط برای
     ادمین است و دستی ساخته می‌شود.
     """
+    organization_id = organization_id or actor.organization_id
     created_n = updated_n = skipped_n = 0
     errors: list[str] = []
 
@@ -229,9 +233,9 @@ def apply_import(db: Session, records: list[dict], actor) -> dict:
                 errors.append(f"سطر {i}: ستون‌های اجباری خالی است: {'، '.join(missing)}")
                 continue
 
-            emp = _find_existing(db, rec)
+            emp = _find_existing(db, rec, organization_id)
             if emp is None:
-                emp = Employee()
+                emp = Employee(organization_id=organization_id)
                 db.add(emp)
                 created_n += 1
                 action = "create"
@@ -250,15 +254,18 @@ def apply_import(db: Session, records: list[dict], actor) -> dict:
             db.flush()
             db.add(
                 ChangeLog(
+                    organization_id=organization_id,
                     entity="employee",
                     entity_id=emp.id,
                     action="import" if action == "create" else "import_update",
                     actor_id=getattr(actor, "id", None),
                     actor_name=getattr(actor, "username", "system"),
+                    actor_role=getattr(actor, "role", None),
                     details={"row": i, "name": light_normalize(name)},
                 )
             )
         except Exception as exc:  # keep importing other rows
+            skipped_n += 1
             errors.append(f"سطر {i}: {exc}")
 
     db.commit()

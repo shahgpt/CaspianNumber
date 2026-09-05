@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { AlertCircle, Eye, EyeOff, KeyRound, LogOut, ShieldCheck } from 'lucide-react'
-import { api } from '../lib/api'
+import { api, setToken } from '../lib/api'
 import { forgetSession } from '../lib/auth'
 import { cn } from '../lib/utils'
 import BrandLockup from './BrandLockup'
@@ -92,11 +92,11 @@ export default function ForcePasswordChange({
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  const tooShort = newPassword.length > 0 && newPassword.length < 6
+  const tooShort = newPassword.length > 0 && newPassword.length < 10
   const mismatch = confirmation.length > 0 && confirmation !== newPassword
   const canSubmit =
     currentPassword.length > 0 &&
-    newPassword.length >= 6 &&
+    newPassword.length >= 10 &&
     confirmation === newPassword &&
     !loading
 
@@ -106,13 +106,14 @@ export default function ForcePasswordChange({
     setError('')
     setLoading(true)
     try {
-      await api('/api/auth/change-password', {
+      const result = await api<{ access_token: string }>('/api/auth/change-password', {
         method: 'POST',
         body: JSON.stringify({
           current_password: currentPassword,
           new_password: newPassword,
         }),
       })
+      setToken(result.access_token)
       onChanged()
     } catch (caught) {
       setError(
@@ -196,7 +197,7 @@ export default function ForcePasswordChange({
               tooShort && 'text-destructive',
             )}
           >
-            رمز جدید باید حداقل ۶ کاراکتر باشد.
+            رمز جدید باید حداقل ۱۰ کاراکتر باشد.
           </p>
 
           <PasswordField

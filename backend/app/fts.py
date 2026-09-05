@@ -20,6 +20,7 @@ FTS_TABLE = "employees_fts"
 _CREATE_SQL = f"""
 CREATE VIRTUAL TABLE IF NOT EXISTS {FTS_TABLE} USING fts5(
     employee_id UNINDEXED,
+    organization_id UNINDEXED,
     search_text,
     tokenize='unicode61'
 )
@@ -27,8 +28,14 @@ CREATE VIRTUAL TABLE IF NOT EXISTS {FTS_TABLE} USING fts5(
 
 
 def _available(db: Session) -> bool:
+    if not db.bind or db.bind.dialect.name != "sqlite":
+        return False
     try:
         db.execute(text(_CREATE_SQL))
+        cols = {row[1] for row in db.execute(text(f"PRAGMA table_info({FTS_TABLE})"))}
+        if "organization_id" not in cols:
+            db.execute(text(f"DROP TABLE {FTS_TABLE}"))
+            db.execute(text(_CREATE_SQL))
         return True
     except Exception:
         logger.warning("FTS5 not available — falling back to LIKE search", exc_info=True)
@@ -42,8 +49,8 @@ def reindex_all(db: Session) -> int:
     db.execute(text(f"DELETE FROM {FTS_TABLE}"))
     db.execute(
         text(
-            f"INSERT INTO {FTS_TABLE}(employee_id, search_text) "
-            "SELECT id, search_text FROM employees"
+            f"INSERT INTO {FTS_TABLE}(employee_id, organization_id, search_text) "
+            "SELECT id, organization_id, search_text FROM employees"
         )
     )
     db.commit()
@@ -51,7 +58,7 @@ def reindex_all(db: Session) -> int:
     return int(n)
 
 
-def upsert_employee(db: Session, employee_id: int, search_text: str) -> None:
+def upsert_employee(db: Session, employee_id: int, organization_id: int, search_text: str) -> None:
     if not _available(db):
         return
     db.execute(
@@ -60,9 +67,10 @@ def upsert_employee(db: Session, employee_id: int, search_text: str) -> None:
     )
     db.execute(
         text(
-            f"INSERT INTO {FTS_TABLE}(employee_id, search_text) VALUES (:eid, :txt)"
+            f"INSERT INTO {FTS_TABLE}(employee_id, organization_id, search_text) "
+            "VALUES (:eid, :oid, :txt)"
         ),
-        {"eid": employee_id, "txt": search_text or ""},
+        {"eid": employee_id, "oid": organization_id, "txt": search_text or ""},
     )
 
 
@@ -87,7 +95,10 @@ def _fts_query(terms: list[str], digits: str) -> str:
     return " OR ".join(parts)
 
 
-def fts_search_ids(db: Session, terms: list[str], digits: str = "", limit: int = 300) -> list[int]:
+def fts_search_ids(
+    db: Session, terms: list[str], digits: str = "", limit: int = 300,
+    organization_id: int | None = None,
+) -> list[int]:
     """Return ranked employee ids matching any term (BM25 order)."""
     if not _available(db):
         return []
@@ -95,13 +106,11 @@ def fts_search_ids(db: Session, terms: list[str], digits: str = "", limit: int =
     if not match:
         return []
     try:
-        rows = db.execute(
-            text(
-                f"SELECT employee_id FROM {FTS_TABLE} WHERE {FTS_TABLE} MATCH :m "
-                "ORDER BY rank LIMIT :lim"
-            ),
-            {"m": match, "lim": limit},
-        ).fetchall()
+        scope_sql = " AND organization_id = :oid" if organization_id is not None else ""
+        rows = db.execute(text(
+            f"SELECT employee_id FROM {FTS_TABLE} WHERE {FTS_TABLE} MATCH :m"
+            f"{scope_sql} ORDER BY rank LIMIT :lim"
+        ), {"m": match, "lim": limit, "oid": organization_id}).fetchall()
         return [r[0] for r in rows]
     except Exception:
         logger.warning("FTS match failed for %r", match, exc_info=True)

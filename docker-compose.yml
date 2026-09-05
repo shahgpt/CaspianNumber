@@ -9,12 +9,17 @@ services:
       - app-data:/data
     environment:
       SECRET_KEY: "${SECRET_KEY:?Set SECRET_KEY in .env}"
+      ENVIRONMENT: "production"
       ADMIN_USERNAME: "${ADMIN_USERNAME:-admin}"
       ADMIN_PASSWORD: "${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}"
       DIRECT_PREFIX: "${DIRECT_PREFIX:-02144}"
       AI_BASE_URL: "${AI_BASE_URL:-https://api.openai.com/v1}"
       AI_API_KEY: "${AI_API_KEY:-}"
       AI_MODEL: "${AI_MODEL:-gpt-4o-mini}"
+      CORS_ORIGINS: "${CORS_ORIGINS:-https://phone.rasha-paper.com}"
+      ACCESS_TOKEN_EXPIRE_MINUTES: "${ACCESS_TOKEN_EXPIRE_MINUTES:-720}"
+      LOGIN_MAX_ATTEMPTS: "${LOGIN_MAX_ATTEMPTS:-8}"
+      LOGIN_WINDOW_SECONDS: "${LOGIN_WINDOW_SECONDS:-300}"
     init: true
     security_opt:
       - no-new-privileges:true

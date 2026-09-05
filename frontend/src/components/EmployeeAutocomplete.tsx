@@ -31,9 +31,10 @@ interface Props {
   onSearch: (text: string) => void
   /** اسپینرِ جستجوی فهرستِ اصلی — کنارِ میکروفون می‌نشیند */
   busy?: boolean
+  organizationId?: string
 }
 
-export default function EmployeeAutocomplete({ value, onValueChange, onSearch, busy }: Props) {
+export default function EmployeeAutocomplete({ value, onValueChange, onSearch, busy, organizationId = '' }: Props) {
   /* تایپ که ایستاد، آن‌وقت از سرور می‌پرسیم — نه سرِ هر حرف */
   const [term, setTerm] = useState('')
   useEffect(() => {
@@ -46,9 +47,9 @@ export default function EmployeeAutocomplete({ value, onValueChange, onSearch, b
     isFetching,
     isError,
   } = useQuery({
-    queryKey: ['suggest', term],
+    queryKey: ['suggest', term, organizationId],
     queryFn: () =>
-      api<Employee[]>(`/api/employees?q=${encodeURIComponent(term)}&limit=${SUGGEST_LIMIT}`),
+      api<Employee[]>(`/api/employees?q=${encodeURIComponent(term)}&limit=${SUGGEST_LIMIT}${organizationId ? `&organization_id=${organizationId}` : ''}`),
     enabled: term.length > 0,
   })
 

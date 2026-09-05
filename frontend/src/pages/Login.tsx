@@ -29,6 +29,11 @@ export default function Login() {
   const [capsLock, setCapsLock] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [phase, setPhase] = useState<'password' | 'mfa' | 'setup' | 'recovery'>('password')
+  const [mfaToken, setMfaToken] = useState('')
+  const [otp, setOtp] = useState('')
+  const [mfaSecret, setMfaSecret] = useState('')
+  const [recoveryCodes, setRecoveryCodes] = useState<string[]>([])
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -197,11 +202,51 @@ export default function Login() {
     setError('')
     setLoading(true)
     try {
-      const res = await api<{ access_token: string; username: string }>('/api/auth/login', {
-        method: 'POST',
-        redirectOn401: false,
-        body: JSON.stringify({ username: username.trim().toLowerCase(), password }),
-      })
+      if (phase === 'recovery') {
+        const from = (location.state as { from?: string } | null)?.from
+        navigate(from ?? '/', { replace: true })
+        return
+      }
+      type LoginResult = {
+        access_token: string; username: string; must_change_password: boolean
+        mfa_required: boolean; mfa_setup_required: boolean; mfa_token: string
+      }
+      let res: LoginResult
+      if (phase === 'password') {
+        res = await api<LoginResult>('/api/auth/login', {
+          method: 'POST', redirectOn401: false,
+          body: JSON.stringify({ username: username.trim().toLowerCase(), password }),
+        })
+        if (res.mfa_setup_required) {
+          const setup = await api<{ secret: string; otpauth_uri: string }>('/api/auth/mfa/setup', {
+            method: 'POST', redirectOn401: false,
+            body: JSON.stringify({ mfa_token: res.mfa_token }),
+          })
+          setMfaToken(res.mfa_token); setMfaSecret(setup.secret); setPhase('setup'); setLoading(false)
+          return
+        }
+        if (res.mfa_required) {
+          setMfaToken(res.mfa_token); setPhase('mfa'); setLoading(false)
+          return
+        }
+      } else if (phase === 'mfa') {
+        res = await api<LoginResult>('/api/auth/mfa/verify', {
+          method: 'POST', redirectOn401: false,
+          body: JSON.stringify({
+            mfa_token: mfaToken,
+            code: /^\d{6}$/.test(otp) ? otp : '',
+            recovery_code: /^\d{6}$/.test(otp) ? '' : otp,
+          }),
+        })
+      } else {
+        const enabled = await api<LoginResult & { recovery_codes: string[] }>('/api/auth/mfa/enable', {
+          method: 'POST', redirectOn401: false,
+          body: JSON.stringify({ mfa_token: mfaToken, code: otp }),
+        })
+        setToken(enabled.access_token); rememberSession(enabled.username)
+        setRecoveryCodes(enabled.recovery_codes); setPhase('recovery'); setLoading(false)
+        return
+      }
       setToken(res.access_token)
       rememberSession(res.username)
       /* مقصد همان جایی است که گارد او را از آن پرت کرده؛ اگر مستقیم آمده،
@@ -222,7 +267,10 @@ export default function Login() {
     }
   }
 
-  const canSubmit = username.trim().length > 0 && password.length > 0 && !loading
+  const canSubmit = !loading && (
+    phase === 'password' ? username.trim().length > 0 && password.length > 0
+      : phase === 'recovery' ? true : phase === 'setup' ? /^\d{6}$/.test(otp) : otp.length >= 6
+  )
 
   const fieldBase =
     'peer w-full h-12 rounded-xl border border-sand-200 bg-sand-50 ps-4 pe-11 text-right text-[15px] text-ink-900 transition-[background-color,border-color,box-shadow] duration-200 focus:outline-none focus:border-sea-500 focus:bg-paper focus:ring-4 focus:ring-sea-500/20'
@@ -406,6 +454,39 @@ export default function Login() {
               )}
             </div>
 
+            {phase !== 'password' && phase !== 'recovery' && (
+              <div data-reveal className="flex flex-col gap-3 rounded-xl border border-sand-200 bg-paper/80 p-4">
+                <div className="flex items-center gap-2 text-sm font-medium text-ink-900">
+                  <ShieldCheck aria-hidden="true" className="h-[18px] w-[18px] text-sea-600" />
+                  {phase === 'setup' ? 'راه‌اندازی تأیید دومرحله‌ای' : 'تأیید دومرحله‌ای'}
+                </div>
+                {phase === 'setup' && (
+                  <p className="text-xs leading-6 text-ink-500">
+                    این کلید را در برنامهٔ Authenticator وارد کنید:
+                    <code dir="ltr" className="mt-2 block select-all rounded-lg bg-sand-100 p-2 text-center text-ink-900">
+                      {mfaSecret}
+                    </code>
+                  </p>
+                )}
+                <label htmlFor="otp" className="text-[13px] font-medium text-ink-700">{phase === 'setup' ? 'کد شش‌رقمی' : 'کد شش‌رقمی یا کد بازیابی'}</label>
+                <input
+                  id="otp" inputMode={phase === 'setup' ? 'numeric' : 'text'} autoComplete="one-time-code" dir="ltr"
+                  value={otp} onChange={(event) => setOtp(phase === 'setup' ? event.target.value.replace(/\D/g, '').slice(0, 6) : event.target.value.trim().slice(0, 32))}
+                  className={`${fieldBase} text-center tracking-[0.35em]`} aria-invalid={Boolean(error)}
+                />
+              </div>
+            )}
+
+            {phase === 'recovery' && (
+              <div role="status" className="flex flex-col gap-3 rounded-xl border border-sea-500/30 bg-sea-500/[0.06] p-4">
+                <p className="text-sm font-bold text-ink-900">کدهای بازیابی را همین حالا ذخیره کنید</p>
+                <p className="text-xs leading-6 text-ink-500">هر کد فقط یک‌بار قابل استفاده است و دوباره نمایش داده نمی‌شود.</p>
+                <div dir="ltr" className="grid grid-cols-2 gap-2 rounded-lg bg-paper p-3 font-mono text-xs text-ink-900">
+                  {recoveryCodes.map((code) => <code key={code}>{code}</code>)}
+                </div>
+              </div>
+            )}
+
             {error && (
               <div
                 ref={errorRef}
@@ -436,7 +517,7 @@ export default function Login() {
                 <span
                   className={`relative inline-flex items-center gap-2 ${loading ? 'opacity-0' : ''}`}
                 >
-                  ورود
+                  {phase === 'password' ? 'ورود' : phase === 'recovery' ? 'ادامه' : 'تأیید کد'}
                   <ArrowLeft
                     strokeWidth={2.2}
                     aria-hidden="true"

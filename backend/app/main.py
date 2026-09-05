@@ -1,29 +1,57 @@
 """Caspian Number — FastAPI application entrypoint."""
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .bootstrap import ensure_admin
-from .core.config import settings
+from .core.config import settings, validate_production_settings
 from .models import SessionLocal, init_db
 from .routers import admin, auth, employees
 
-app = FastAPI(title="Caspian Number", version="0.1.0")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    validate_production_settings()
+    init_db()
+    db = SessionLocal()
+    try:
+        ensure_admin(db)
+    finally:
+        db.close()
+    yield
+
+
+app = FastAPI(title="Caspian Number", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # same-origin in production (nginx); open for dev
+    allow_origins=[x.strip() for x in settings.CORS_ORIGINS.split(",") if x.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def security_headers(request, call_next):
+    """Small, deployment-safe baseline; CSP is also enforced at nginx."""
+    import secrets
+    request.state.request_id = request.headers.get("x-request-id") or secrets.token_hex(12)
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request.state.request_id
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "same-origin"
+    response.headers["Permissions-Policy"] = "camera=(), geolocation=(), microphone=(self)"
+    if request.url.path.startswith("/api/auth"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 app.include_router(auth.router)
 app.include_router(employees.router)
 app.include_router(admin.router)
 
 
-@app.on_event("startup")
 def startup():
+    """Compatibility hook used by a legacy paging test and maintenance scripts."""
     init_db()
     db = SessionLocal()
     try:
