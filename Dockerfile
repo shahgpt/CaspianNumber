@@ -11,11 +11,15 @@ FROM python:3.11-slim
 WORKDIR /srv
 
 COPY backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gosu \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir -r requirements.txt
 
 COPY backend/app ./app
 COPY backend/alembic.ini ./alembic.ini
 COPY backend/alembic ./alembic
+COPY deploy/docker-entrypoint.sh /usr/local/bin/caspian-entrypoint
 COPY --from=frontend /app/dist ./frontend/dist
 
 ENV FRONTEND_DIST=/srv/frontend/dist \
@@ -23,10 +27,11 @@ ENV FRONTEND_DIST=/srv/frontend/dist \
 
 RUN useradd --system --create-home --home-dir /home/caspian caspian \
     && mkdir -p /data \
-    && chown -R caspian:caspian /srv /data
+    && chown -R caspian:caspian /srv /data \
+    && chmod 0755 /usr/local/bin/caspian-entrypoint
 
 VOLUME ["/data"]
 EXPOSE 8899
-USER caspian
 
+ENTRYPOINT ["caspian-entrypoint"]
 CMD ["sh", "-c", "python -m alembic -c /srv/alembic.ini upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8899"]
