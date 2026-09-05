@@ -61,7 +61,17 @@ def get_current_user(
     return user
 
 
-def require_admin(user: User = Depends(get_current_user)) -> User:
+def require_password_changed(user: User = Depends(get_current_user)) -> User:
+    """اجازه‌ی استفاده از برنامه فقط بعد از کنارگذاشتن رمز موقت."""
+    if user.must_change_password:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="ابتدا باید رمز عبور موقت خود را تغییر دهید",
+        )
+    return user
+
+
+def require_admin(user: User = Depends(require_password_changed)) -> User:
     """گاردِ مسیرهای مدیریتی — فقط حسابِ ادمین.
 
     حالا که هر کارمند حساب دارد، «وارد شده» دیگر یعنی «مجاز» نیست:

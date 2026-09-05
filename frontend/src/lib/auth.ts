@@ -13,6 +13,7 @@ export interface Session {
   username: string
   is_active: boolean
   is_admin: boolean
+  must_change_password: boolean
 }
 
 const USER_KEY = 'cn_username'

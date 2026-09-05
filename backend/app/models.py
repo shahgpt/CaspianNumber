@@ -37,6 +37,10 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     is_active = Column(Boolean, default=True)
     is_admin = Column(Boolean, default=False, nullable=False)
+    # تا وقتی کاربر رمزِ موقت را عوض نکرده، فقط اجازه‌ی دیدن نشست و
+    # فراخوانی endpoint تغییر رمز را دارد. این وضعیت باید در دیتابیس باشد؛
+    # از روی هشِ رمز نمی‌شود موقتی‌بودن را با اطمینان تشخیص داد.
+    must_change_password = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -150,6 +154,7 @@ def _migrate_sqlite() -> None:
        از روی داخلی دوباره ساخته می‌شود.
     ۳) ستونِ رمزِ خوانا برداشته می‌شود؛ رمزها فقط هش می‌مانند.
     ۴) نقشِ رشته‌ای برداشته می‌شود و جایش `is_admin` می‌نشیند.
+    ۵) وضعیتِ اجبار به تغییر رمز اضافه می‌شود.
     """
     from sqlalchemy import text
 
@@ -182,6 +187,14 @@ def _migrate_sqlite() -> None:
             # حساب دارد ادمین می‌ماند، وگرنه کسی به پنل راه ندارد.
             conn.execute(text("ALTER TABLE users ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT 0"))
             conn.execute(text("UPDATE users SET is_admin = 1"))
+
+        if "must_change_password" not in user_cols:
+            # حساب‌های قدیمی دائمی فرض می‌شوند. اگر رمزِ قدیمی واقعاً موقت
+            # باشد، login با دیدن پیشوند tmp- همین پرچم را روشن می‌کند.
+            conn.execute(text(
+                "ALTER TABLE users ADD COLUMN must_change_password "
+                "BOOLEAN NOT NULL DEFAULT 0"
+            ))
 
 
 def _drop_non_admin_accounts(conn) -> None:

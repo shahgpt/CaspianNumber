@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import Employee
 from ..schemas import EmployeeOut
-from ..security import get_current_user
+from ..security import require_password_changed
 from ..core.persian import normalize_keep_digits
 
 # دفترچه پشتِ ورود است: هر کارمند حسابِ خودش را دارد و بدون توکنِ معتبر
@@ -15,7 +15,7 @@ from ..core.persian import normalize_keep_digits
 router = APIRouter(
     prefix="/api/employees",
     tags=["employees"],
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(require_password_changed)],
 )
 
 

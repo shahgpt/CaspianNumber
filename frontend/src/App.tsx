@@ -3,13 +3,14 @@ import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import Login from './pages/Login'
 import Directory from './pages/Directory'
 import Admin from './pages/Admin'
+import ForcePasswordChange from './components/ForcePasswordChange'
 import { getToken } from './lib/api'
-import { fetchSession } from './lib/auth'
+import { fetchSession, type Session } from './lib/auth'
 
 /* دفترچه پشتِ ورود است: هر کارمند حسابِ خودش را دارد و بدون آن هیچ
    شماره‌ای دیده نمی‌شود. `/login` دروازه‌ی همه است، نه فقط مدیر. */
 
-type Verdict = 'checking' | 'allowed' | 'denied'
+type Verdict = 'checking' | 'password-change' | 'allowed' | 'denied'
 
 /**
  * گاردِ مسیرها. عمداً به localStorage تکیه نمی‌کند — آن را هر کسی با یک
@@ -23,12 +24,18 @@ function Require({ admin = false, children }: { admin?: boolean; children: React
   const location = useLocation()
   // بدون توکن اصلاً لازم نیست از سرور بپرسیم — همان‌جا رد است
   const [status, setStatus] = useState<Verdict>(getToken() ? 'checking' : 'denied')
+  const [session, setSession] = useState<Session | null>(null)
 
   useEffect(() => {
     if (status !== 'checking') return
     let alive = true
     fetchSession().then((s) => {
       if (!alive) return
+      setSession(s)
+      if (s?.must_change_password) {
+        setStatus('password-change')
+        return
+      }
       setStatus(s && (!admin || s.is_admin) ? 'allowed' : 'denied')
     })
     return () => {
@@ -37,6 +44,19 @@ function Require({ admin = false, children }: { admin?: boolean; children: React
   }, [status, admin])
 
   if (status === 'checking') return <GateSplash />
+  if (status === 'password-change' && session) {
+    return (
+      <ForcePasswordChange
+        username={session.username}
+        onChanged={() => {
+          setSession((current) =>
+            current ? { ...current, must_change_password: false } : current,
+          )
+          setStatus(!admin || session.is_admin ? 'allowed' : 'denied')
+        }}
+      />
+    )
+  }
   if (status === 'denied') {
     // کاربرِ عادی که در پنل را زده، توکنِ درستی دارد — بیرون انداختنش به
     // صفحه‌ی ورود گیجش می‌کند. او را به دفترچه برمی‌گردانیم.

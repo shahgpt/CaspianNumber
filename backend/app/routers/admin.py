@@ -156,13 +156,15 @@ def create_user(data: UserCreate, user=Depends(require_admin), db: Session = Dep
         username=username,
         password_hash=hash_password(temp_password),
         is_admin=data.is_admin,
+        must_change_password=True,
     )
     db.add(u)
     db.commit()
     db.refresh(u)
     log(db, user, "user", u.id, "create", {"username": username, "is_admin": u.is_admin})
     return {"id": u.id, "username": u.username, "is_active": u.is_active,
-            "is_admin": u.is_admin, "temp_password": temp_password}
+            "is_admin": u.is_admin, "must_change_password": u.must_change_password,
+            "temp_password": temp_password}
 
 
 @router.post("/users/{user_id}/toggle-admin")
@@ -218,6 +220,7 @@ def set_credentials(
         if is_temp_password(password):
             raise HTTPException(400, "رمز نمی‌تواند با «tmp-» شروع شود")
         target.password_hash = hash_password(password)
+        target.must_change_password = False
         changed["password"] = True
 
     if not changed:
@@ -242,6 +245,7 @@ def reset_password(user_id: int, user=Depends(require_admin), db: Session = Depe
         raise HTTPException(404, "کاربر یافت نشد")
     temp_password = gen_temp_password()
     target.password_hash = hash_password(temp_password)
+    target.must_change_password = True
     log(db, user, "user", user_id, "reset_password", {"username": target.username})
     db.commit()
     return {"username": target.username, "temp_password": temp_password}

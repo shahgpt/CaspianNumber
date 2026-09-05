@@ -23,6 +23,13 @@ def login(data: LoginIn, db: Session = Depends(get_db)):
         raise HTTPException(status_code=403, detail="حساب شما غیرفعال است")
 
     must_change = is_temp_password(data.password)
+    # سازگاری با حساب‌های موقتی که پیش از اضافه‌شدن ستون ساخته شده‌اند:
+    # متنِ رمز فقط همین‌جا در دسترس است، پس یک‌بار تشخیص می‌دهیم و وضعیت را
+    # برای تمام نشست‌های بعدی در دیتابیس نگه می‌داریم.
+    if must_change and not user.must_change_password:
+        user.must_change_password = True
+        db.commit()
+    must_change = bool(user.must_change_password)
     return TokenOut(
         access_token=create_access_token(user),
         username=user.username,
@@ -50,5 +57,6 @@ def change_password(
     if is_temp_password(data.new_password):
         raise HTTPException(status_code=400, detail="رمز جدید نمی‌تواند با «tmp-» شروع شود")
     user.password_hash = hash_password(data.new_password)
+    user.must_change_password = False
     db.commit()
     return {"ok": True}
