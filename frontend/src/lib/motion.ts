@@ -84,6 +84,37 @@ export function createRevealer(
     if (targets.length) gsap.to(targets, vars)
   }
 
+  /**
+   * یک دسته را آشکار می‌کند. این تابع هم برای ردیف‌هایی است که همین حالا
+   * داخل viewport هستند و هم برای دسته‌هایی که بعداً observer تحویل می‌دهد.
+   */
+  function reveal(arrived: HTMLElement[]) {
+    if (!arrived.length) return
+
+    arrived.forEach((el) => {
+      el.dataset[done] = '1'
+      hidden.delete(el)
+      io?.unobserve(el)
+    })
+
+    const stagger = { each, amount: Math.min(each * arrived.length, maxStagger) }
+    const wait = Math.max(0, (gateUntil - performance.now()) / 1000)
+    // پشتِ دروازه، هر فراخوان بعد از قبلی می‌آید تا آبشار از بالا به
+    // پایین بشکند، نه اینکه همه با هم بپرند
+    const offset = wait > 0 ? Math.min(gatedCount * each, maxStagger) : 0
+    if (wait > 0) gatedCount += arrived.length
+
+    tween(arrived, {
+      opacity: 1,
+      y: 0,
+      duration,
+      delay: wait + offset,
+      ease: 'expo.out',
+      stagger,
+      clearProps: 'transform,opacity',
+    })
+  }
+
   const io = instant
     ? null
     : new IntersectionObserver(
@@ -92,33 +123,9 @@ export function createRevealer(
             .filter((e) => e.isIntersecting)
             .map((e) => e.target as HTMLElement)
             .filter((el) => hidden.has(el))
-          if (!arrived.length) return
-
-          arrived.forEach((el) => {
-            el.dataset[done] = '1'
-            hidden.delete(el)
-            io?.unobserve(el)
-          })
-
-          const stagger = { each, amount: Math.min(each * arrived.length, maxStagger) }
-          const wait = Math.max(0, (gateUntil - performance.now()) / 1000)
-          // پشتِ دروازه، هر فراخوان بعد از قبلی می‌آید تا آبشار از بالا به
-          // پایین بشکند، نه اینکه همه با هم بپرند
-          const offset = wait > 0 ? Math.min(gatedCount * each, maxStagger) : 0
-          if (wait > 0) gatedCount += arrived.length
-          const delay = wait + offset
-
-          tween(arrived, {
-            opacity: 1,
-            y: 0,
-            duration,
-            delay,
-            ease: 'expo.out',
-            stagger,
-            clearProps: 'transform,opacity',
-          })
+          reveal(arrived)
         },
-        { rootMargin: '0px 0px -8% 0px', threshold: 0.01 },
+        { rootMargin: '0px', threshold: 0.01 },
       )
 
   function scan() {
@@ -136,10 +143,23 @@ export function createRevealer(
     }
 
     gsap.set(fresh, { opacity: 0, y })
+    fresh.forEach((el) => hidden.add(el))
+
+    // IntersectionObserver ممکن است هنگام تعویض تب، ردیف‌های همین حالا
+    // قابل‌دید را در چند frame تحویل دهد یا تا اولین scroll معطل کند.
+    // جای ردیف‌ها همین حالا معتبر است؛ موجِ داخل viewport را یک‌جا آغاز
+    // می‌کنیم و فقط ردیف‌های پایین‌تر را به observer می‌سپاریم.
+    const viewportBottom = document.documentElement.clientHeight || window.innerHeight
+    const visibleNow = fresh.filter((el) => {
+      const rect = el.getBoundingClientRect()
+      return rect.bottom > 0 && rect.top < viewportBottom
+    })
+    const visibleSet = new Set(visibleNow)
     fresh.forEach((el) => {
-      hidden.add(el)
+      if (visibleSet.has(el)) return
       io.observe(el)
     })
+    reveal(visibleNow)
   }
 
   function destroy() {

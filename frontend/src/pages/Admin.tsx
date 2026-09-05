@@ -1313,15 +1313,10 @@ export default function Admin() {
             <div className="flex gap-3 pt-1">
               <button
                 type="button"
-                onClick={() =>
-                  copyText(
-                    `${issued.username} / ${issued.temp_password}`,
-                    'نام کاربری و رمز موقت',
-                  )
-                }
+                onClick={() => copyText(issued.temp_password, 'رمز موقت')}
                 className="flex-1 rounded-xl bg-sea-500 py-3 font-medium text-white transition-colors duration-200 hover:bg-sea-600 active:scale-[.98] dark:text-deep-950 dark:hover:bg-sea-400"
               >
-                کپی نام کاربری و رمز
+                کپی رمز موقت
               </button>
               <button
                 type="button"
