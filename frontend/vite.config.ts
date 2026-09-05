@@ -16,8 +16,8 @@ export default defineConfig({
         description: 'دفترچه تلفن هوشمند کارکنان',
         lang: 'fa',
         dir: 'rtl',
-        theme_color: '#080808',
-        background_color: '#080808',
+        theme_color: '#FFFFFF',
+        background_color: '#FFFFFF',
         display: 'standalone',
         start_url: '/',
         icons: [

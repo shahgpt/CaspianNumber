@@ -1,20 +1,20 @@
 <!doctype html>
-<html lang="fa" dir="rtl" class="dark" data-theme="dark">
+<html lang="fa" dir="rtl" data-theme="light">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#080808" />
+    <meta name="theme-color" content="#FFFFFF" />
     <title>Caspian Number — دفترچه تلفن سازمانی</title>
     <script>
       // تم را پیش از اولین رنگ‌آمیزی اعمال کن تا پرش سفید/تاریک رخ ندهد.
       (function () {
         try {
-          // پیش‌فرضِ محصول تاریک است؛ فقط انتخابِ صریحِ روشن آن را تغییر می‌دهد.
+          // پیش‌فرضِ محصول روشن است؛ فقط انتخابِ صریحِ تاریک آن را تغییر می‌دهد.
           var s = localStorage.getItem('cn_theme')
-          var t = s === 'light' ? 'light' : 'dark'
+          var t = s === 'dark' ? 'dark' : 'light'
           var r = document.documentElement
           r.classList.toggle('dark', t === 'dark')
           r.dataset.theme = t
@@ -22,7 +22,7 @@
             .querySelector('meta[name="theme-color"]')
             .setAttribute('content', t === 'dark' ? '#080808' : '#FFFFFF')
         } catch (e) {
-          /* بدون localStorage همان تم تاریکِ از پیش اعمال‌شده باقی می‌ماند */
+          /* بدون localStorage همان تم روشنِ از پیش اعمال‌شده باقی می‌ماند */
         }
       })()
     </script>

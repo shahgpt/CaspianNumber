@@ -1,6 +1,6 @@
 /**
  * تم روشن/تاریک — منبع حقیقت: کلاس `dark` روی <html>.
- * پیش‌فرضِ محصول تاریک است (کاغذِ مرکبی)؛ انتخابِ صریحِ کاربر در
+ * پیش‌فرضِ محصول روشن است (کاغذِ سفید)؛ انتخابِ صریحِ کاربر در
  * localStorage می‌ماند. ترجیحِ سیستم دنبال نمی‌شود — این یک انتخابِ
  * طراحی است، نه یک تنظیمِ فراموش‌شده.
  */
@@ -10,8 +10,8 @@ export type Theme = 'light' | 'dark'
 const KEY = 'cn_theme'
 const listeners = new Set<(t: Theme) => void>()
 
-/** پیش‌فرضِ محصول: تاریک. انتخابِ صریحِ روشن همچنان حفظ می‌شود. */
-const DEFAULT_THEME: Theme = 'dark'
+/** پیش‌فرضِ محصول: روشن. انتخابِ صریحِ تاریک همچنان حفظ می‌شود. */
+const DEFAULT_THEME: Theme = 'light'
 
 /** انتخاب صریح کاربر (اگر وجود داشته باشد) */
 export function storedTheme(): Theme | null {
@@ -28,7 +28,7 @@ export function getTheme(): Theme {
   return document.documentElement.classList.contains('dark') ? 'dark' : 'light'
 }
 
-/** تمِ آغازین: انتخابِ کاربر، وگرنه پیش‌فرضِ تاریک */
+/** تمِ آغازین: انتخابِ کاربر، وگرنه پیش‌فرضِ روشن */
 export function initTheme() {
   applyTheme(storedTheme() ?? DEFAULT_THEME, false)
 }
