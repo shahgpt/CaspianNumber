@@ -65,23 +65,21 @@ def _user_payload(user: User) -> dict:
         "organization_name": user.organization.name if user.organization else "",
         "role": user.role, "is_active": user.is_active, "is_admin": user.is_admin,
         "must_change_password": user.must_change_password,
-        "manage_global_admins": user.manage_global_admins,
+        "is_root": user.is_root,
         "can_delete_data": user.can_delete_data,
     }
 
 
-def _validate_role_change(
-    db: Session, actor: User, target_org: Organization, role: str,
-    manage_global_admins: bool,
-) -> None:
+def _validate_role_change(actor: User, target_org: Organization, role: str) -> None:
     if role not in VALID_ROLES:
         raise HTTPException(400, "نقش معتبر نیست")
-    elevated = role in {ROLE_GLOBAL_ADMIN, ROLE_HEAD_OFFICE_ACCESS_ADMIN} or manage_global_admins
-    if elevated:
-        if target_org.kind != ORG_HEAD_OFFICE or not can_manage_global_admins(actor, db):
-            raise HTTPException(403, "مدیریت این نقش فقط با مجوز دفتر مرکزی ممکن است")
-    if manage_global_admins and role not in {ROLE_HEAD_OFFICE_ACCESS_ADMIN, ROLE_GLOBAL_ADMIN}:
-        raise HTTPException(400, "مجوز manage_global_admins فقط برای نقش‌های دفتر مرکزی مجاز است")
+    if role in {ROLE_GLOBAL_ADMIN, ROLE_HEAD_OFFICE_ACCESS_ADMIN}:
+        # These two live in the head office by definition, and only the root
+        # account hands them out.
+        if target_org.kind != ORG_HEAD_OFFICE:
+            raise HTTPException(400, "این نقش فقط برای حسابی در دفتر مرکزی معنا دارد")
+        if not can_manage_global_admins(actor):
+            raise HTTPException(403, "فقط حساب مدیر سامانه می‌تواند این نقش را بدهد یا بگیرد")
     if actor.role != ROLE_GLOBAL_ADMIN and target_org.id != actor.organization_id:
         raise HTTPException(404, "واحد سازمانی یافت نشد")
 
@@ -91,11 +89,13 @@ def _require_delete(user: User) -> None:
         raise HTTPException(403, "مجوز حذف داده را ندارید")
 
 
-def _require_privileged_account_management(db: Session, actor: User, target: User) -> None:
-    """Prevent takeover or disabling of accounts that can grant global access."""
-    privileged = target.role in {ROLE_GLOBAL_ADMIN, ROLE_HEAD_OFFICE_ACCESS_ADMIN} or target.manage_global_admins
-    if privileged and not can_manage_global_admins(actor, db):
-        raise HTTPException(403, "مدیریت این حساب فقط با مجوز manage_global_admins ممکن است")
+def _require_privileged_account_management(actor: User, target: User) -> None:
+    """Prevent takeover or disabling of accounts that carry global access."""
+    if target.is_root and not actor.is_root:
+        raise HTTPException(403, "حساب مدیر سامانه را کسی جز خودش نمی‌تواند تغییر دهد")
+    privileged = target.role in {ROLE_GLOBAL_ADMIN, ROLE_HEAD_OFFICE_ACCESS_ADMIN}
+    if privileged and not can_manage_global_admins(actor):
+        raise HTTPException(403, "مدیریت این حساب فقط از حساب مدیر سامانه ممکن است")
 
 
 # ---------------- Organizations ----------------
@@ -303,12 +303,11 @@ def create_user(
     if not org:
         raise HTTPException(404, "واحد سازمانی یافت نشد")
     role = ROLE_UNIT_MANAGER if data.is_admin is True else data.role
-    _validate_role_change(db, user, org, role, data.manage_global_admins)
+    _validate_role_change(user, org, role)
     temp_password = gen_temp_password()
     target = User(
         username=username, password_hash=hash_password(temp_password),
         organization_id=org.id, role=role, must_change_password=True,
-        manage_global_admins=data.manage_global_admins,
         can_delete_data=data.can_delete_data,
     )
     db.add(target); db.flush()
@@ -328,22 +327,19 @@ def set_role(
     target = _user_or_404(db, user_id, user, organization_id)
     if target.id == user.id:
         raise HTTPException(400, "نمی‌توانید نقش یا مجوز خودتان را تغییر دهید")
-    _require_privileged_account_management(db, user, target)
+    _require_privileged_account_management(user, target)
     org = db.get(Organization, target.organization_id)
-    _validate_role_change(db, user, org, data.role, data.manage_global_admins)
-    if target.role == ROLE_GLOBAL_ADMIN or data.role == ROLE_GLOBAL_ADMIN:
-        if not can_manage_global_admins(user, db):
-            raise HTTPException(403, "مجوز manage_global_admins لازم است")
+    _validate_role_change(user, org, data.role)
+    if target.role == ROLE_GLOBAL_ADMIN and not can_manage_global_admins(user):
+        raise HTTPException(403, "فقط حساب مدیر سامانه می‌تواند نقش مدیر کل را بگیرد")
     before = target.role
     target.role = data.role
-    target.manage_global_admins = data.manage_global_admins
     target.can_delete_data = data.can_delete_data
     target.token_version += 1
     audit_event(db, action="ROLE_CHANGED", entity="user", entity_id=target.id,
                 organization_id=target.organization_id, actor=user, request=request,
                 target_user_id=target.id, role_before=before, role_after=target.role,
                 details={"username": target.username,
-                         "manage_global_admins": target.manage_global_admins,
                          "can_delete_data": target.can_delete_data})
     db.commit()
     return {"ok": True, **_user_payload(target)}
@@ -366,7 +362,7 @@ def set_credentials(
     user: User = Depends(require_admin), db: Session = Depends(get_db),
 ):
     target = _user_or_404(db, user_id, user)
-    _require_privileged_account_management(db, user, target)
+    _require_privileged_account_management(user, target)
     changed = []
     username = data.username.strip().lower()
     if username and username != target.username:
@@ -394,7 +390,7 @@ def reset_password(
     user: User = Depends(require_admin), db: Session = Depends(get_db),
 ):
     target = _user_or_404(db, user_id, user)
-    _require_privileged_account_management(db, user, target)
+    _require_privileged_account_management(user, target)
     temp_password = gen_temp_password()
     target.password_hash = hash_password(temp_password)
     target.must_change_password = True; target.token_version += 1
@@ -413,7 +409,11 @@ def toggle_active(
     target = _user_or_404(db, user_id, user)
     if target.id == user.id:
         raise HTTPException(400, "نمی‌توانید حساب خودتان را غیرفعال کنید")
-    _require_privileged_account_management(db, user, target)
+    # Authorization first, then the invariant: an outsider should be told they
+    # may not touch this account, not why it is special.
+    _require_privileged_account_management(user, target)
+    if target.is_root:
+        raise HTTPException(400, "حساب مدیر سامانه را نمی‌توان غیرفعال کرد")
     target.is_active = not target.is_active; target.token_version += 1
     audit_event(db, action="ACCOUNT_STATUS_CHANGED", entity="user", entity_id=target.id,
                 organization_id=target.organization_id, actor=user, request=request,

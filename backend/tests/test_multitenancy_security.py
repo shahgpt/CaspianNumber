@@ -122,33 +122,33 @@ def test_factory_manager_cannot_choose_another_org_or_create_global_admin():
 
         escalation = client.post("/api/admin/users", headers=headers, json={
             "username": _name("global"), "organization_id": a_id, "role": ROLE_GLOBAL_ADMIN,
-            "manage_global_admins": True,
         })
-        assert escalation.status_code == 403
+        # A factory is not the head office, so the role has nowhere to live there.
+        assert escalation.status_code == 400
 
 
-def test_head_office_is_not_a_parent_tenant_and_permission_is_required_for_global_role():
+def test_head_office_is_not_a_parent_tenant_and_only_root_grants_the_global_role():
     with client:
         a_id, b_id, _, _, ea_id, eb_id = _seed_two_units()
-        root = _headers("root", "root-pass")
-        hq_rows = client.get("/api/employees", headers=root)
-        assert hq_rows.status_code == 200
-        assert ea_id not in {row["id"] for row in hq_rows.json()}
-        assert eb_id not in {row["id"] for row in hq_rows.json()}
-        assert client.get(f"/api/employees?organization_id={a_id}", headers=root).status_code == 404
-        assert client.get(f"/api/employees?organization_id={b_id}", headers=root).status_code == 404
-
         db = SessionLocal()
         try:
             head_id = db.query(Organization).filter(Organization.kind == "HEAD_OFFICE").first().id
-            username = _name("hq-no-global-permission")
+            username = _name("hq-manager")
             db.add(User(username=username, password_hash=hash_password("head-office-pass"),
-                        organization_id=head_id, role=ROLE_UNIT_MANAGER,
-                        manage_global_admins=False, can_delete_data=True))
+                        organization_id=head_id, role=ROLE_UNIT_MANAGER, can_delete_data=True))
             db.commit()
         finally:
             db.close()
         headers = _headers(username, "head-office-pass")
+
+        # Being in the head office grants nothing over the factories.
+        hq_rows = client.get("/api/employees", headers=headers)
+        assert hq_rows.status_code == 200
+        assert ea_id not in {row["id"] for row in hq_rows.json()}
+        assert eb_id not in {row["id"] for row in hq_rows.json()}
+        assert client.get(f"/api/employees?organization_id={a_id}", headers=headers).status_code == 404
+        assert client.get(f"/api/employees?organization_id={b_id}", headers=headers).status_code == 404
+
         escalation = client.post("/api/admin/users", headers=headers, json={
             "username": _name("forbidden-global"), "role": ROLE_GLOBAL_ADMIN,
         })
@@ -157,9 +157,9 @@ def test_head_office_is_not_a_parent_tenant_and_permission_is_required_for_globa
         db = SessionLocal()
         try:
             privileged = User(
-                username=_name("global-grantor"), password_hash=hash_password("privileged-pass"),
+                username=_name("head-office-access-admin"), password_hash=hash_password("privileged-pass"),
                 organization_id=head_id, role=ROLE_HEAD_OFFICE_ACCESS_ADMIN,
-                manage_global_admins=True, can_delete_data=True,
+                can_delete_data=True,
             )
             db.add(privileged); db.commit(); privileged_id = privileged.id
         finally:
@@ -176,7 +176,7 @@ def test_head_office_is_not_a_parent_tenant_and_permission_is_required_for_globa
         ).status_code == 403
         assert client.patch(
             f"/api/admin/users/{privileged_id}/role", headers=headers,
-            json={"role": ROLE_UNIT_USER, "manage_global_admins": False, "can_delete_data": False},
+            json={"role": ROLE_UNIT_USER, "can_delete_data": False},
         ).status_code == 403
 
 
@@ -185,15 +185,18 @@ def test_self_escalation_is_rejected_and_role_change_is_audited():
         root = _headers("root", "root-pass")
         me = client.get("/api/auth/me", headers=root).json()
         self_change = client.patch(f"/api/admin/users/{me['id']}/role", headers=root, json={
-            "role": ROLE_GLOBAL_ADMIN, "manage_global_admins": True, "can_delete_data": True,
+            "role": ROLE_GLOBAL_ADMIN, "can_delete_data": True,
         })
         assert self_change.status_code == 400
 
-        created = client.post("/api/admin/users", headers=root, json={"username": _name("hq-user")})
+        head_id = client.get("/api/admin/organizations", headers=root).json()
+        head_id = next(o["id"] for o in head_id if o["kind"] == "HEAD_OFFICE")
+        created = client.post("/api/admin/users", headers=root,
+                              json={"username": _name("hq-user"), "organization_id": head_id})
         assert created.status_code == 200, created.text
         target = created.json()
         changed = client.patch(f"/api/admin/users/{target['id']}/role", headers=root, json={
-            "role": ROLE_GLOBAL_ADMIN, "manage_global_admins": False, "can_delete_data": True,
+            "role": ROLE_GLOBAL_ADMIN, "can_delete_data": True,
         })
         assert changed.status_code == 200, changed.text
         logs = client.get("/api/admin/logs?limit=500", headers=root).json()
@@ -233,7 +236,11 @@ def test_global_admin_can_view_all_units_or_one_unit():
             assert global_view is not None and global_view.organization_id is None
         finally:
             db.close()
-        hq_logs = client.get("/api/admin/logs?limit=500", headers=_headers("root", "root-pass"))
+        # An all-units read belongs to no unit, so a unit-scoped log view must
+        # not pick it up.
+        head_id = next(o["id"] for o in client.get("/api/admin/organizations", headers=headers).json()
+                       if o["kind"] == "HEAD_OFFICE")
+        hq_logs = client.get(f"/api/admin/logs?limit=500&organization_id={head_id}", headers=headers)
         assert hq_logs.status_code == 200
         assert not any(
             row["actor_name"] == username and row["action"] == "DIRECTORY_VIEW"
@@ -251,3 +258,79 @@ def test_global_admin_can_view_all_units_or_one_unit():
         )
         assert scoped_write.status_code == 200, scoped_write.text
         assert scoped_write.json()["organization_id"] == a_id
+
+
+def test_only_the_root_account_can_grant_the_global_role():
+    """The right to mint global admins must not itself be grantable."""
+    with client:
+        db = SessionLocal()
+        try:
+            head_id = db.query(Organization).filter(Organization.kind == "HEAD_OFFICE").first().id
+            grantee = _name("hq-access-admin")
+            db.add(User(username=grantee, password_hash=hash_password("access-admin-pass"),
+                        organization_id=head_id, role=ROLE_HEAD_OFFICE_ACCESS_ADMIN,
+                        can_delete_data=True))
+            db.commit()
+        finally:
+            db.close()
+
+        # A head-office access admin is the highest non-root role, and still cannot.
+        headers = _headers(grantee, "access-admin-pass")
+        blocked = client.post("/api/admin/users", headers=headers, json={
+            "username": _name("wannabe-global"), "organization_id": head_id,
+            "role": ROLE_GLOBAL_ADMIN,
+        })
+        assert blocked.status_code == 403
+
+        # There is no request shape that turns another account into a granter.
+        assert client.patch(
+            f"/api/admin/users/{client.get('/api/admin/users', headers=headers).json()[0]['id']}/role",
+            headers=headers, json={"role": ROLE_GLOBAL_ADMIN, "can_delete_data": True, "is_root": True},
+        ).status_code == 422
+
+        root = _headers("root", "root-pass")
+        allowed = client.post("/api/admin/users", headers=root, json={
+            "username": _name("blessed-global"), "organization_id": head_id,
+            "role": ROLE_GLOBAL_ADMIN,
+        })
+        assert allowed.status_code == 200, allowed.text
+        assert allowed.json()["is_root"] is False
+
+
+def test_root_account_cannot_be_taken_over_or_disabled():
+    with client:
+        db = SessionLocal()
+        try:
+            head_id = db.query(Organization).filter(Organization.kind == "HEAD_OFFICE").first().id
+            attacker = _name("hq-attacker")
+            db.add(User(username=attacker, password_hash=hash_password("attacker-pass"),
+                        organization_id=head_id, role=ROLE_HEAD_OFFICE_ACCESS_ADMIN,
+                        can_delete_data=True))
+            db.commit()
+            root_id = db.query(User).filter(User.username == "root").first().id
+        finally:
+            db.close()
+        headers = _headers(attacker, "attacker-pass")
+
+        assert client.patch(f"/api/admin/users/{root_id}/credentials", headers=headers,
+                            json={"username": _name("stolen"), "password": "attacker-password"}).status_code == 403
+        assert client.post(f"/api/admin/users/{root_id}/reset-password", headers=headers).status_code == 403
+        assert client.post(f"/api/admin/users/{root_id}/toggle-active", headers=headers).status_code == 403
+        assert client.patch(f"/api/admin/users/{root_id}/role", headers=headers,
+                            json={"role": ROLE_UNIT_USER, "can_delete_data": False}).status_code == 403
+
+        # Not even the root account may switch itself off and strand the system.
+        root = _headers("root", "root-pass")
+        assert client.post(f"/api/admin/users/{root_id}/toggle-active", headers=root).status_code == 400
+
+
+def test_head_office_only_roles_are_refused_for_a_factory():
+    """The bug: the panel offered a head-office role while scoped to a factory."""
+    with client:
+        a_id, _, _, _, _, _ = _seed_two_units()
+        root = _headers("root", "root-pass")
+        for role in (ROLE_HEAD_OFFICE_ACCESS_ADMIN, ROLE_GLOBAL_ADMIN):
+            refused = client.post("/api/admin/users", headers=root, json={
+                "username": _name("factory-elevated"), "organization_id": a_id, "role": role,
+            })
+            assert refused.status_code == 400, f"{role}: {refused.text}"

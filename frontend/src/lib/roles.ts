@@ -25,7 +25,8 @@ export const ROLE_ORDER: Role[] = [
   'GLOBAL_ADMIN',
 ]
 
-/** نقش‌هایی که فقط با مجوز دفتر مرکزی داده می‌شوند و تأیید صریح می‌خواهند. */
+/* این دو نقش فقط در دفتر مرکزی معنا دارند و فقط حساب مدیر سامانه می‌دهدشان.
+   سرور هر دو شرط را جدا بررسی می‌کند؛ فرم هم نباید گزینه‌ای بسازد که رد شود. */
 export const ELEVATED_ROLES: readonly Role[] = ['HEAD_OFFICE_ACCESS_ADMIN', 'GLOBAL_ADMIN']
 
 export const isElevated = (role: Role): boolean => ELEVATED_ROLES.includes(role)
@@ -34,7 +35,6 @@ export const roleLabel = (role: string | null | undefined): string =>
   role ? ROLE_LABELS[role as Role] ?? role : '—'
 
 export const PERMISSION_LABELS = {
-  manage_global_admins: 'اعطای نقش مدیر کل',
   can_delete_data: 'حذف داده',
 } as const
 
@@ -42,14 +42,25 @@ export const PERMISSION_LABELS = {
 export const deleteIsImplicit = (role: Role): boolean => role === 'GLOBAL_ADMIN'
 
 /** سرور ترکیب‌های ناسازگار را رد می‌کند؛ فرم نباید اصلاً بسازدشان. */
-export function normalizeAccess<T extends { role: Role; manage_global_admins: boolean; can_delete_data: boolean }>(
-  draft: T,
-): T {
+export function normalizeAccess<T extends { role: Role; can_delete_data: boolean }>(draft: T): T {
   return {
     ...draft,
-    manage_global_admins: isElevated(draft.role) ? draft.manage_global_admins : false,
     can_delete_data: deleteIsImplicit(draft.role) ? true : draft.can_delete_data,
   }
+}
+
+/** نقش‌هایی که در این واحد و از این حساب واقعاً قابل انتخاب‌اند. */
+export function assignableRoles(opts: {
+  targetIsHeadOffice: boolean
+  actorIsRoot: boolean
+  keep?: Role
+}): Role[] {
+  return ROLE_ORDER.filter(
+    (r) =>
+      r === opts.keep ||
+      !isElevated(r) ||
+      (opts.targetIsHeadOffice && opts.actorIsRoot),
+  )
 }
 
 export const ORGANIZATION_KINDS = {

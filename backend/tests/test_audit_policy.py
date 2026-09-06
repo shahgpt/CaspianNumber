@@ -120,13 +120,13 @@ def test_nobody_can_change_their_own_access_level():
         blocked = client.patch(
             f"/api/admin/users/{me['id']}/role",
             headers=headers,
-            json={"role": "GLOBAL_ADMIN", "manage_global_admins": True, "can_delete_data": True},
+            json={"role": "GLOBAL_ADMIN", "can_delete_data": True},
         )
         assert blocked.status_code == 400
 
         db = SessionLocal()
         try:
-            assert db.get(User, me["id"]).role == "HEAD_OFFICE_ACCESS_ADMIN"
+            assert db.get(User, me["id"]).role == "GLOBAL_ADMIN"
         finally:
             db.close()
 
@@ -135,8 +135,11 @@ def test_role_change_records_who_gave_what_to_whom():
     with client:
         headers = _headers("root", "root-pass")
         username = f"grantee-{uuid.uuid4().hex[:8]}"
+        orgs = client.get("/api/admin/organizations", headers=headers).json()
+        head_id = next(o["id"] for o in orgs if o["kind"] == "HEAD_OFFICE")
         created = client.post(
-            "/api/admin/users", headers=headers, json={"username": username, "role": "UNIT_USER"}
+            "/api/admin/users", headers=headers,
+            json={"username": username, "role": "UNIT_USER", "organization_id": head_id},
         )
         assert created.status_code == 200, created.text
         target_id = client.get("/api/admin/users", headers=headers).json()
@@ -145,7 +148,7 @@ def test_role_change_records_who_gave_what_to_whom():
         promoted = client.patch(
             f"/api/admin/users/{target_id}/role",
             headers=headers,
-            json={"role": "UNIT_MANAGER", "manage_global_admins": False, "can_delete_data": True},
+            json={"role": "UNIT_MANAGER", "can_delete_data": True},
         )
         assert promoted.status_code == 200, promoted.text
 

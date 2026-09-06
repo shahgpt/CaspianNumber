@@ -24,9 +24,15 @@ def _admin_headers() -> dict:
     return {"Authorization": f"Bearer {res.json()['access_token']}"}
 
 
+def _head_office_id(headers: dict) -> int:
+    """The root account spans every unit, so its writes must name a target."""
+    orgs = client.get("/api/admin/organizations", headers=headers).json()
+    return next(o["id"] for o in orgs if o["kind"] == "HEAD_OFFICE")
+
+
 def _make(headers: dict, first: str) -> int:
     res = client.post(
-        "/api/admin/employees",
+        f"/api/admin/employees?organization_id={_head_office_id(headers)}",
         headers=headers,
         json={"first_name": first, "last_name": "آزمایشی", "extension": "1001"},
     )
@@ -39,7 +45,8 @@ def test_bulk_delete_removes_only_the_chosen_ones():
         h = _admin_headers()
         a, b, c = _make(h, "الف"), _make(h, "ب"), _make(h, "ج")
 
-        res = client.post("/api/admin/employees/bulk-delete", headers=h, json={"ids": [a, b]})
+        res = client.post(f"/api/admin/employees/bulk-delete?organization_id={_head_office_id(h)}",
+                          headers=h, json={"ids": [a, b]})
         assert res.status_code == 200, res.text
         assert res.json()["deleted"] == 2
 
@@ -56,7 +63,8 @@ def test_bulk_delete_removes_only_the_chosen_ones():
 def test_bulk_delete_rejects_an_empty_selection():
     with client:
         h = _admin_headers()
-        assert client.post("/api/admin/employees/bulk-delete", headers=h, json={"ids": []}).status_code == 400
+        assert client.post(f"/api/admin/employees/bulk-delete?organization_id={_head_office_id(h)}",
+                           headers=h, json={"ids": []}).status_code == 400
 
 
 def test_bulk_delete_is_admin_only():

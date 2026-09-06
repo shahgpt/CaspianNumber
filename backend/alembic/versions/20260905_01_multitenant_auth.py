@@ -36,7 +36,7 @@ def upgrade() -> None:
         "users": [
             sa.Column("organization_id", sa.Integer(), nullable=False, server_default="1"),
             sa.Column("role", sa.String(40), nullable=False, server_default="UNIT_USER"),
-            sa.Column("manage_global_admins", sa.Boolean(), nullable=False, server_default=sa.false()),
+            sa.Column("is_root", sa.Boolean(), nullable=False, server_default=sa.false()),
             sa.Column("can_delete_data", sa.Boolean(), nullable=False, server_default=sa.false()),
             sa.Column("token_version", sa.Integer(), nullable=False, server_default="0"),
             sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),

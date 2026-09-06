@@ -17,7 +17,7 @@ export interface Session {
   organization_id: number
   organization_name: string
   role: Role
-  manage_global_admins: boolean
+  is_root: boolean
   can_delete_data: boolean
   must_change_password: boolean
 }

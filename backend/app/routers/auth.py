@@ -50,7 +50,7 @@ def _user_payload(user: User) -> dict:
         "is_active": user.is_active,
         "is_admin": user.is_admin,
         "must_change_password": user.must_change_password,
-        "manage_global_admins": user.manage_global_admins,
+        "is_root": user.is_root,
         "can_delete_data": user.can_delete_data,
     }
 

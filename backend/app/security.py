@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session
 from .core.config import settings
 from .database import get_db
 from .models import (
-    ORG_HEAD_OFFICE,
     ROLE_GLOBAL_ADMIN,
     ROLE_HEAD_OFFICE_ACCESS_ADMIN,
     ROLE_UNIT_MANAGER,
@@ -113,14 +112,9 @@ def require_global_admin(user: User = Depends(require_password_changed)) -> User
     return user
 
 
-def can_manage_global_admins(user: User, db: Session) -> bool:
-    org = db.get(Organization, user.organization_id)
-    return bool(
-        org
-        and org.kind == ORG_HEAD_OFFICE
-        and user.manage_global_admins
-        and user.role in {ROLE_HEAD_OFFICE_ACCESS_ADMIN, ROLE_GLOBAL_ADMIN}
-    )
+def can_manage_global_admins(user: User) -> bool:
+    """Only the built-in root account grants or revokes the global-admin role."""
+    return bool(user.is_root)
 
 
 def resolve_scope_organization(

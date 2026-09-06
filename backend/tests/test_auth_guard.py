@@ -72,10 +72,12 @@ def test_last_admin_cannot_be_stripped():
 def test_temporary_password_blocks_app_until_it_is_changed():
     with client:
         admin_token = _login("root", "root-pass")
+        orgs = client.get("/api/admin/organizations", headers=_auth(admin_token)).json()
+        head_id = next(o["id"] for o in orgs if o["kind"] == "HEAD_OFFICE")
         created = client.post(
             "/api/admin/users",
             headers=_auth(admin_token),
-            json={"username": "first-login-admin", "is_admin": True},
+            json={"username": "first-login-admin", "is_admin": True, "organization_id": head_id},
         )
         assert created.status_code == 200, created.text
         assert created.json()["must_change_password"] is True

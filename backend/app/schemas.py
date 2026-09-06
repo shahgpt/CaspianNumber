@@ -97,7 +97,7 @@ class UserOut(BaseModel):
     is_active: bool
     is_admin: bool = False
     must_change_password: bool = False
-    manage_global_admins: bool = False
+    is_root: bool = False
     can_delete_data: bool = False
 
 class UserCreatedOut(UserOut):
@@ -114,7 +114,6 @@ class UserCreate(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     organization_id: Optional[int] = None
     role: str = ROLE_UNIT_USER
-    manage_global_admins: bool = False
     can_delete_data: bool = False
     # Legacy client field. True maps only to UNIT_MANAGER, never GLOBAL_ADMIN.
     is_admin: Optional[bool] = None
@@ -123,7 +122,6 @@ class UserCreate(BaseModel):
 class UserRoleUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     role: str
-    manage_global_admins: bool = False
     can_delete_data: bool = False
 
 

@@ -24,9 +24,15 @@ def _admin_headers() -> dict:
     return {"Authorization": f"Bearer {res.json()['access_token']}"}
 
 
+def _head_office_id(headers: dict) -> int:
+    """The root account spans every unit, so its writes must name a target."""
+    orgs = client.get("/api/admin/organizations", headers=headers).json()
+    return next(o["id"] for o in orgs if o["kind"] == "HEAD_OFFICE")
+
+
 def _upload(headers: dict, csv_text: str) -> dict:
     res = client.post(
-        "/api/admin/import",
+        f"/api/admin/import?organization_id={_head_office_id(headers)}",
         headers=headers,
         files={"file": ("people.csv", csv_text.encode("utf-8"), "text/csv")},
     )

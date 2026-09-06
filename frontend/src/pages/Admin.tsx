@@ -15,7 +15,7 @@ import {
   PERMISSION_LABELS,
   ROLE_LABELS,
   ROLE_NOTES,
-  ROLE_ORDER,
+  assignableRoles,
   deleteIsImplicit,
   isElevated,
   normalizeAccess,
@@ -233,8 +233,6 @@ function describeLog(l: LogEntry, subject: string) {
     if (errors) lines.push(`${faDigits(errors)} سطر خطا داشت`)
   } else if (l.action === 'ROLE_CHANGED') {
     lines.push(`نقش: ${roleLabel(l.role_before)} ← ${roleLabel(l.role_after)}`)
-    if ('manage_global_admins' in d)
-      lines.push(`${PERMISSION_LABELS.manage_global_admins}: ${d.manage_global_admins ? 'دارد' : 'ندارد'}`)
     if ('can_delete_data' in d)
       lines.push(`${PERMISSION_LABELS.can_delete_data}: ${d.can_delete_data ? 'دارد' : 'ندارد'}`)
   } else if (l.action === 'ACCOUNT_STATUS_CHANGED') {
@@ -287,7 +285,7 @@ type AdminUser = {
   organization_id: number
   organization_name: string
   role: Role
-  manage_global_admins: boolean
+  is_root: boolean
   can_delete_data: boolean
 }
 
@@ -295,7 +293,6 @@ type AdminUser = {
    اشتباهی بود که مجوزِ حذف را بی‌سروصدا کنارِ تغییرِ نقش می‌داد. */
 type AccessDraft = {
   role: Role
-  manage_global_admins: boolean
   can_delete_data: boolean
 }
 
@@ -306,15 +303,21 @@ type Organization = { id: number; name: string; code: string; kind: 'HEAD_OFFICE
 function AccessFields({
   idPrefix,
   value,
-  canGrantElevated,
+  actorIsRoot,
+  targetOrganization,
   onChange,
 }: {
   idPrefix: string
   value: AccessDraft
-  canGrantElevated: boolean
+  actorIsRoot: boolean
+  targetOrganization: Organization | undefined
   onChange: (next: AccessDraft) => void
 }) {
-  const roles = ROLE_ORDER.filter((r) => canGrantElevated || !isElevated(r) || r === value.role)
+  /* نقش‌های دفتر مرکزی در یک کارخانه جایی ندارند — سرور همان‌جا ردشان
+     می‌کند. پیش از این فهرست ثابت بود و گزینه‌ای می‌ماند که هرگز ثبت
+     نمی‌شد. */
+  const targetIsHeadOffice = targetOrganization?.kind === 'HEAD_OFFICE'
+  const roles = assignableRoles({ targetIsHeadOffice, actorIsRoot, keep: value.role })
   const set = (patch: Partial<AccessDraft>) => onChange(normalizeAccess({ ...value, ...patch }))
 
   return (
@@ -334,6 +337,12 @@ function AccessFields({
           ))}
         </select>
         <p className="mt-1.5 text-[11.5px] leading-relaxed text-ink-400">{ROLE_NOTES[value.role]}</p>
+        {targetOrganization && !targetIsHeadOffice && (
+          <p className="mt-1.5 text-[11.5px] leading-relaxed text-ink-400">
+            نقش‌های دفتر مرکزی برای «{targetOrganization.name}» معنا ندارند؛ بالاترین نقشِ یک
+            کارخانه «{ROLE_LABELS.UNIT_MANAGER}» است.
+          </p>
+        )}
       </div>
 
       {value.role !== 'UNIT_USER' && (
@@ -355,18 +364,6 @@ function AccessFields({
                 {PERMISSION_LABELS.can_delete_data}
               </label>
             )}
-
-            {canGrantElevated && isElevated(value.role) && (
-              <label className="flex cursor-pointer select-none items-center gap-2 text-[13px] text-ink-700">
-                <input
-                  type="checkbox"
-                  className="pick"
-                  checked={value.manage_global_admins}
-                  onChange={(e) => set({ manage_global_admins: e.target.checked })}
-                />
-                {PERMISSION_LABELS.manage_global_admins}
-              </label>
-            )}
           </div>
         </fieldset>
       )}
@@ -386,7 +383,11 @@ export default function Admin() {
   const { session } = useSession()
   const isGlobal = session?.role === 'GLOBAL_ADMIN'
   const [tab, setTab] = useState<'people' | 'users' | 'organizations' | 'logs'>('people')
+  /* مدیر کل در حالتِ مبهم شروع نمی‌کند: «همهٔ واحدها» فقط برای دیدن است و
+     سرور هر نوشتنی را در آن حالت رد می‌کند. پیش‌فرض واحدِ خودِ اوست و
+     دیدنِ همه یک انتخابِ صریح می‌ماند. */
   const [selectedOrg, setSelectedOrg] = useState('')
+  const pinnedOwnOrg = useRef(false)
   const [editing, setEditing] = useState<Partial<Employee> | null>(null)
   /* تکمیلِ ماشینی: خطا باید داخلِ همین شیت دیده شود — نوارِ پیامِ صفحه
      زیرِ پرده‌ی مودال می‌ماند و کسی نمی‌بیندش. */
@@ -414,7 +415,7 @@ export default function Admin() {
   const [accessDraft, setAccessDraft] = useState<AccessDraft | null>(null)
   const [accessBusy, setAccessBusy] = useState(false)
   const [newUser, setNewUser] = useState<AccessDraft & { username: string }>({
-    username: '', role: 'UNIT_USER', manage_global_admins: false, can_delete_data: false,
+    username: '', role: 'UNIT_USER', can_delete_data: false,
   })
   const [newOrg, setNewOrg] = useState({ name: '', code: '', kind: 'FACTORY' })
   const [logFilter, setLogFilter] = useState<(typeof LOG_FILTERS)[number][0]>('all')
@@ -428,9 +429,9 @@ export default function Admin() {
   })
   const directPrefix = health?.direct_prefix ?? ''
   const needsWriteScope = Boolean(isGlobal && !selectedOrg)
-  /* نقش‌های دفتر مرکزی فقط با مجوزِ صریح داده می‌شوند — همان قاعده‌ای که
-     سرور هم اعمالش می‌کند. رابط نباید گزینه‌ای بگذارد که همیشه رد می‌شود. */
-  const canGrantElevated = Boolean(session?.manage_global_admins)
+  /* فقط حسابِ ریشه نقشِ مدیر کل می‌دهد — همان قاعده‌ای که سرور هم اعمالش
+     می‌کند. رابط نباید گزینه‌ای بگذارد که همیشه رد می‌شود. */
+  const actorIsRoot = Boolean(session?.is_root)
   const scopeSuffix = selectedOrg ? `?organization_id=${selectedOrg}` : ''
   const scopeJoin = (path: string) => `${path}${path.includes('?') ? '&' : '?'}organization_id=${selectedOrg}`
 
@@ -438,6 +439,17 @@ export default function Admin() {
     queryKey: ['organizations'],
     queryFn: () => api<Organization[]>('/api/admin/organizations'),
   })
+
+  useEffect(() => {
+    if (pinnedOwnOrg.current || !isGlobal || !session?.organization_id) return
+    pinnedOwnOrg.current = true
+    setSelectedOrg(String(session.organization_id))
+  }, [isGlobal, session?.organization_id])
+  /* واحدی که حساب در آن ساخته می‌شود؛ نقش‌های مجاز از نوعِ همین واحد
+     می‌آیند، نه از یک فهرست ثابت. */
+  const writeOrg = organizations?.find(
+    (org) => org.id === (selectedOrg ? Number(selectedOrg) : session?.organization_id),
+  )
 
   /** پیش‌نمایشِ شماره‌ی مستقیم برای وقتی که ادمین فیلد را خالی می‌گذارد */
   function directPreview(extension?: string): string {
@@ -848,7 +860,6 @@ export default function Admin() {
     setAccessEditing(u)
     setAccessDraft({
       role: u.role,
-      manage_global_admins: u.manage_global_admins,
       can_delete_data: u.can_delete_data,
     })
   }
@@ -909,7 +920,7 @@ export default function Admin() {
           organization_id: selectedOrg ? Number(selectedOrg) : undefined,
         }),
       })
-      setNewUser({ username: '', role: 'UNIT_USER', manage_global_admins: false, can_delete_data: false })
+      setNewUser({ username: '', role: 'UNIT_USER', can_delete_data: false })
       setIssued({ username: res.username, temp_password: res.temp_password })
       qc.invalidateQueries({ queryKey: ['admin-users'] })
     } catch (err) {
@@ -1093,9 +1104,9 @@ export default function Admin() {
               {PERMISSION_LABELS.can_delete_data}
             </span>
           )}
-          {session?.manage_global_admins && (
+          {session?.is_root && (
             <span className="rounded-md bg-tint px-2 py-0.5 text-[11.5px] text-ink-600">
-              {PERMISSION_LABELS.manage_global_admins}
+              مدیر سامانه
             </span>
           )}
         </div>
@@ -1310,7 +1321,8 @@ export default function Admin() {
                 <AccessFields
                   idPrefix="new"
                   value={newUser}
-                  canGrantElevated={canGrantElevated}
+                  actorIsRoot={actorIsRoot}
+                  targetOrganization={writeOrg}
                   onChange={(next) => setNewUser({ ...next, username: newUser.username })}
                 />
               </div>
@@ -1390,9 +1402,9 @@ export default function Admin() {
                                 {PERMISSION_LABELS.can_delete_data}
                               </span>
                             )}
-                            {u.manage_global_admins && (
+                            {u.is_root && (
                               <span className="rounded-md bg-tint px-1.5 py-0.5 text-[11px] text-ink-500">
-                                {PERMISSION_LABELS.manage_global_admins}
+                                مدیر سامانه
                               </span>
                             )}
                           </span>
@@ -1529,18 +1541,18 @@ export default function Admin() {
                     همهٔ واحدها را می‌بیند. شما {roleLabel(session?.role)} هستید و دادهٔ واحد
                     خودتان را مدیریت می‌کنید.
                   </p>
-                  {canGrantElevated ? (
+                  {actorIsRoot ? (
                     <>
                       <p className="mt-3 max-w-[62ch] text-[13px] leading-relaxed text-ink-500">
-                        شما اجازهٔ {PERMISSION_LABELS.manage_global_admins} را دارید: در تبِ
-                        «کاربران» یک حساب با نقش «مدیر کل سامانه» بسازید. آن حساب سرِ اولین
-                        ورود رمز خودش را می‌گذارد و از آن پس می‌تواند واحد بسازد.
+                        شما حساب مدیر سامانه هستید: در تبِ «کاربران» یک حساب با نقش «مدیر کل
+                        سامانه» بسازید. آن حساب سرِ اولین ورود رمز خودش را می‌گذارد و از آن پس
+                        می‌تواند واحد بسازد.
                       </p>
                       <button
                         type="button"
                         onClick={() => {
                           setTab('users')
-                          setNewUser({ username: '', role: 'GLOBAL_ADMIN', manage_global_admins: false, can_delete_data: true })
+                          setNewUser({ username: '', role: 'GLOBAL_ADMIN', can_delete_data: true })
                         }}
                         className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-sea-500 px-4 py-2.5 text-sm font-medium text-white transition-colors duration-200 hover:bg-sea-600 active:scale-[.98] dark:text-deep-950 dark:hover:bg-sea-400"
                       >
@@ -1550,7 +1562,7 @@ export default function Admin() {
                     </>
                   ) : (
                     <p className="mt-3 max-w-[62ch] text-[13px] leading-relaxed text-ink-500">
-                      برای افزودن واحد، از مسئول دفتر مرکزی بخواهید حساب مدیر کل سامانه بسازد.
+                      نقشِ مدیر کل را فقط حساب مدیر سامانه می‌دهد. برای افزودن واحد، از او بخواهید.
                     </p>
                   )}
                 </div>
@@ -1914,7 +1926,8 @@ export default function Admin() {
               <AccessFields
                 idPrefix="access"
                 value={accessDraft}
-                canGrantElevated={canGrantElevated}
+                actorIsRoot={actorIsRoot}
+                targetOrganization={organizations?.find((o) => o.id === accessEditing.organization_id)}
                 onChange={setAccessDraft}
               />
             </div>
@@ -1928,7 +1941,6 @@ export default function Admin() {
                 {accessDraft.role === 'GLOBAL_ADMIN'
                   ? ' و دادهٔ همهٔ واحدها را می‌بیند.'
                   : ' و می‌تواند در دفتر مرکزی حساب بسازد.'}
-                {accessDraft.manage_global_admins && ' همچنین می‌تواند نقش مدیر کل را به دیگران بدهد یا از آن‌ها بگیرد.'}
               </p>
             )}
 

@@ -64,7 +64,9 @@ class User(Base):
     role = Column(String(40), nullable=False, default=ROLE_UNIT_USER)
     is_active = Column(Boolean, default=True, nullable=False)
     must_change_password = Column(Boolean, default=False, nullable=False)
-    manage_global_admins = Column(Boolean, default=False, nullable=False)
+    # The single built-in account. Set once at bootstrap and reachable through
+    # no API, so the right to mint global admins cannot itself be handed out.
+    is_root = Column(Boolean, default=False, nullable=False)
     can_delete_data = Column(Boolean, default=False, nullable=False)
     token_version = Column(Integer, default=0, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -207,7 +209,7 @@ def _migrate_sqlite() -> None:
         if user_cols:
             _add_sqlite_column(conn, "users", user_cols, "organization_id", "INTEGER NOT NULL DEFAULT 1")
             _add_sqlite_column(conn, "users", user_cols, "role", "VARCHAR(40) NOT NULL DEFAULT 'UNIT_USER'")
-            _add_sqlite_column(conn, "users", user_cols, "manage_global_admins", "BOOLEAN NOT NULL DEFAULT 0")
+            _add_sqlite_column(conn, "users", user_cols, "is_root", "BOOLEAN NOT NULL DEFAULT 0")
             _add_sqlite_column(conn, "users", user_cols, "can_delete_data", "BOOLEAN NOT NULL DEFAULT 0")
             _add_sqlite_column(conn, "users", user_cols, "token_version", "INTEGER NOT NULL DEFAULT 0")
             _add_sqlite_column(conn, "users", user_cols, "must_change_password", "BOOLEAN NOT NULL DEFAULT 0")
