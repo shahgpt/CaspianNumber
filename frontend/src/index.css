@@ -965,3 +965,21 @@ button.roster-row:disabled {
     font-size: 16px;
   }
 }
+
+/* فهرستِ انتخاب‌گر: از سمتِ دکمه می‌گشاید، مثلِ کشویی که باز می‌شود.
+   کوتاه است چون کاربر وسطِ یک کار است، نه تماشاچیِ صحنه. */
+.depth-select {
+  animation: depth-select-open 0.16s cubic-bezier(0.16, 1, 0.3, 1) both;
+  transform-origin: top center;
+}
+
+@keyframes depth-select-open {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

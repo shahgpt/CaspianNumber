@@ -8,6 +8,7 @@ import { api, toEnDigits } from '../lib/api'
 import { forgetSession, useSession } from '../lib/auth'
 import BrandLockup from '../components/BrandLockup'
 import ThemeToggle from '../components/ThemeToggle'
+import Select from '../components/ui/select'
 import type { Employee } from '../lib/api'
 import { createRevealer, faDigits, shouldAnimate } from '../lib/motion'
 import type { Revealer } from '../lib/motion'
@@ -326,17 +327,12 @@ function AccessFields({
         <label htmlFor={`${idPrefix}-role`} className="mb-1.5 block text-xs font-medium text-ink-500">
           نقش
         </label>
-        <select
+        <Select
           id={`${idPrefix}-role`}
           value={value.role}
-          onChange={(e) => set({ role: e.target.value as Role })}
-          className="w-full rounded-xl border border-sand-300 bg-paper px-3 py-2 text-sm text-ink-900 transition-colors focus:border-sea-500 focus:outline-none focus:ring-2 focus:ring-sea-500/20"
-        >
-          {roles.map((r) => (
-            <option key={r} value={r}>{ROLE_LABELS[r]}</option>
-          ))}
-        </select>
-        <p className="mt-1.5 text-[11.5px] leading-relaxed text-ink-400">{ROLE_NOTES[value.role]}</p>
+          onChange={(v) => set({ role: v as Role })}
+          options={roles.map((r) => ({ value: r, label: ROLE_LABELS[r], hint: ROLE_NOTES[r] }))}
+        />
         {targetOrganization && !targetIsHeadOffice && (
           <p className="mt-1.5 text-[11.5px] leading-relaxed text-ink-400">
             نقش‌های دفتر مرکزی برای «{targetOrganization.name}» معنا ندارند؛ بالاترین نقشِ یک
@@ -1077,17 +1073,23 @@ export default function Admin() {
         <div className="mx-auto mt-5 flex w-full max-w-6xl flex-wrap items-center gap-x-2.5 gap-y-2 px-5 text-[12.5px] sm:px-8">
           <span className="text-ink-500">محدودهٔ داده</span>
           {isGlobal ? (
-            <select
+            <Select
+              size="sm"
               aria-label="انتخاب واحد سازمانی"
               value={selectedOrg}
-              onChange={(event) => { setSelectedOrg(event.target.value); setSelected(new Set()) }}
-              className="rounded-lg border border-sand-300 bg-paper px-2.5 py-1 text-[12.5px] font-medium text-ink-900 transition-colors hover:border-sea-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sea-500/30"
-            >
-              <option value="">همهٔ واحدها</option>
-              {(organizations ?? []).filter((org) => org.is_active).map((org) => (
-                <option key={org.id} value={org.id}>{org.name}</option>
-              ))}
-            </select>
+              onChange={(v) => { setSelectedOrg(v); setSelected(new Set()) }}
+              options={[
+                { value: '', label: 'همهٔ واحدها', hint: 'فقط برای دیدن؛ برای نوشتن یک واحد را انتخاب کنید' },
+                ...(organizations ?? []).filter((org) => org.is_active).map((org) => ({
+                  value: String(org.id),
+                  label: org.name,
+                  // «دفتر مرکزی · دفتر مرکزی» چیزی اضافه نمی‌کند
+                  hint: organizationKindLabel(org.kind) === org.name
+                    ? undefined
+                    : organizationKindLabel(org.kind),
+                })),
+              ]}
+            />
           ) : (
             <strong className="font-medium text-ink-900">
               {session?.organization_name || 'واحد شما'}
@@ -1509,15 +1511,15 @@ export default function Admin() {
                       <label htmlFor="org-kind" className="mb-1.5 block text-xs font-medium text-ink-500">
                         نوع
                       </label>
-                      <select
+                      <Select
                         id="org-kind"
                         value={newOrg.kind}
-                        onChange={(e) => setNewOrg({ ...newOrg, kind: e.target.value })}
-                        className="w-full rounded-xl border border-sand-300 bg-paper px-3 py-2 text-sm text-ink-900 transition-colors focus:border-sea-500 focus:outline-none focus:ring-2 focus:ring-sea-500/20"
-                      >
-                        <option value="FACTORY">کارخانه</option>
-                        <option value="HEAD_OFFICE">دفتر مرکزی</option>
-                      </select>
+                        onChange={(v) => setNewOrg({ ...newOrg, kind: v })}
+                        options={[
+                          { value: 'FACTORY', label: 'کارخانه' },
+                          { value: 'HEAD_OFFICE', label: 'دفتر مرکزی' },
+                        ]}
+                      />
                     </div>
                   </div>
 

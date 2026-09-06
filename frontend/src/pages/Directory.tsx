@@ -10,6 +10,7 @@ import PinList from '../components/PinList'
 import EmployeeAutocomplete from '../components/EmployeeAutocomplete'
 import BrandLockup from '../components/BrandLockup'
 import ThemeToggle from '../components/ThemeToggle'
+import Select from '../components/ui/select'
 import { countTo, createRevealer, faDigits, shouldAnimate } from '../lib/motion'
 import type { Revealer } from '../lib/motion'
 import { readPins, writePins } from '../lib/pins'
@@ -459,17 +460,19 @@ export default function Directory() {
           <div className="mt-4 flex flex-wrap items-center gap-x-2.5 gap-y-2 text-[12.5px] text-ink-500">
             <span>محدودهٔ داده</span>
             {isGlobal ? (
-              <select
+              <Select
+                size="sm"
                 aria-label="انتخاب واحد سازمانی"
                 value={selectedOrg}
-                onChange={(event) => setSelectedOrg(event.target.value)}
-                className="rounded-lg border border-sand-300 bg-paper px-2.5 py-1 text-[12.5px] font-medium text-ink-900 transition-colors hover:border-sea-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sea-500/30"
-              >
-                <option value="">همهٔ واحدها</option>
-                {(organizations ?? []).filter((org) => org.is_active).map((org) => (
-                  <option key={org.id} value={org.id}>{org.name}</option>
-                ))}
-              </select>
+                onChange={setSelectedOrg}
+                options={[
+                  { value: '', label: 'همهٔ واحدها' },
+                  ...(organizations ?? []).filter((org) => org.is_active).map((org) => ({
+                    value: String(org.id),
+                    label: org.name,
+                  })),
+                ]}
+              />
             ) : (
               <strong className="font-medium text-ink-900">
                 {session?.organization_name || 'واحد شما'}
