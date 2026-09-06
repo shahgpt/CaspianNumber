@@ -1,4 +1,4 @@
-"""organization isolation, RBAC, MFA and audit metadata
+"""organization isolation, RBAC and audit metadata
 
 Revision ID: 20260905_01
 Revises:
@@ -39,9 +39,6 @@ def upgrade() -> None:
             sa.Column("manage_global_admins", sa.Boolean(), nullable=False, server_default=sa.false()),
             sa.Column("can_delete_data", sa.Boolean(), nullable=False, server_default=sa.false()),
             sa.Column("token_version", sa.Integer(), nullable=False, server_default="0"),
-            sa.Column("mfa_enabled", sa.Boolean(), nullable=False, server_default=sa.false()),
-            sa.Column("mfa_secret_enc", sa.Text(), nullable=True),
-            sa.Column("mfa_recovery_hashes", sa.JSON(), nullable=False, server_default="[]"),
             sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
         ],
         "change_log": [

@@ -134,6 +134,8 @@ const LOG_VERBS: Record<string, { verb: string; tone: Tone }> = {
   LOGIN_SUCCESS: { verb: 'وارد سامانه شد', tone: 'add' },
   LOGIN_FAILED: { verb: 'ورود ناموفق داشت', tone: 'remove' },
   LOGIN_BLOCKED: { verb: 'به‌دلیل تلاش‌های ورود مسدود شد', tone: 'remove' },
+  // تأیید دومرحله‌ای از محصول برداشته شد؛ این چند فعل فقط برای خواناماندنِ
+  // ردیف‌های قدیمیِ دفتر مانده‌اند، چون دفتر پاک نمی‌شود.
   MFA_SETUP_STARTED: { verb: 'راه‌اندازی ورود دومرحله‌ای را آغاز کرد', tone: 'edit' },
   MFA_SETUP_REQUIRED: { verb: 'نیازمند راه‌اندازی ورود دومرحله‌ای شد', tone: 'edit' },
   MFA_ENABLED: { verb: 'ورود دومرحله‌ای را فعال کرد', tone: 'add' },
@@ -287,7 +289,6 @@ type AdminUser = {
   role: Role
   manage_global_admins: boolean
   can_delete_data: boolean
-  mfa_enabled: boolean
 }
 
 /* آنچه یک حساب «می‌تواند بکند» — نقش و دو مجوز، با هم. جدا کردنشان همان
@@ -1394,17 +1395,6 @@ export default function Admin() {
                                 {PERMISSION_LABELS.manage_global_admins}
                               </span>
                             )}
-                            {u.role === 'GLOBAL_ADMIN' && (
-                              <span
-                                className={`rounded-md px-1.5 py-0.5 text-[11px] ${
-                                  u.mfa_enabled
-                                    ? 'bg-tint text-tide'
-                                    : 'bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-200'
-                                }`}
-                              >
-                                {u.mfa_enabled ? 'ورود دومرحله‌ای فعال' : 'در انتظار ورود دومرحله‌ای'}
-                              </span>
-                            )}
                           </span>
                         </td>
 
@@ -1544,7 +1534,7 @@ export default function Admin() {
                       <p className="mt-3 max-w-[62ch] text-[13px] leading-relaxed text-ink-500">
                         شما اجازهٔ {PERMISSION_LABELS.manage_global_admins} را دارید: در تبِ
                         «کاربران» یک حساب با نقش «مدیر کل سامانه» بسازید. آن حساب سرِ اولین
-                        ورود، ورود دومرحله‌ای‌اش را فعال می‌کند و از آن پس می‌تواند واحد بسازد.
+                        ورود رمز خودش را می‌گذارد و از آن پس می‌تواند واحد بسازد.
                       </p>
                       <button
                         type="button"
@@ -1936,7 +1926,7 @@ export default function Admin() {
                 با ثبت این تغییر، <span dir="ltr" className="font-medium">{accessEditing.username}</span> نقش
                 «{ROLE_LABELS[accessDraft.role]}» می‌گیرد
                 {accessDraft.role === 'GLOBAL_ADMIN'
-                  ? ' و دادهٔ همهٔ واحدها را می‌بیند. تا وقتی ورود دومرحله‌ای را فعال نکند، نمی‌تواند وارد شود.'
+                  ? ' و دادهٔ همهٔ واحدها را می‌بیند.'
                   : ' و می‌تواند در دفتر مرکزی حساب بسازد.'}
                 {accessDraft.manage_global_admins && ' همچنین می‌تواند نقش مدیر کل را به دیگران بدهد یا از آن‌ها بگیرد.'}
               </p>

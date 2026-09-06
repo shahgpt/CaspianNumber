@@ -14,7 +14,6 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     SECRET_KEY: str = "change-me-in-production"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 12
-    MFA_TOKEN_EXPIRE_MINUTES: int = 10
     LOGIN_MAX_ATTEMPTS: int = 8
     LOGIN_WINDOW_SECONDS: int = 300
     CORS_ORIGINS: str = "http://127.0.0.1:5173,http://localhost:5173"

@@ -9,8 +9,6 @@ from .models import ROLE_UNIT_USER
 class LoginIn(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=1, max_length=256)
-    otp: str = Field(default="", max_length=16)
-    recovery_code: str = Field(default="", max_length=64)
 
 
 class TokenOut(BaseModel):
@@ -18,36 +16,11 @@ class TokenOut(BaseModel):
     token_type: str = "bearer"
     username: str
     must_change_password: bool = False
-    mfa_required: bool = False
-    mfa_setup_required: bool = False
-    mfa_token: str = ""
 
 
 class ChangePasswordIn(BaseModel):
     current_password: str = Field(min_length=1, max_length=256)
     new_password: str = Field(min_length=10, max_length=256)
-
-
-class MfaTokenIn(BaseModel):
-    mfa_token: str
-
-
-class MfaEnableIn(MfaTokenIn):
-    code: str = Field(min_length=6, max_length=8)
-
-
-class MfaVerifyIn(MfaTokenIn):
-    code: str = Field(default="", max_length=8)
-    recovery_code: str = Field(default="", max_length=64)
-
-
-class MfaSetupOut(BaseModel):
-    secret: str
-    otpauth_uri: str
-
-
-class MfaEnabledOut(TokenOut):
-    recovery_codes: list[str]
 
 
 class EmployeeBase(BaseModel):
@@ -126,7 +99,6 @@ class UserOut(BaseModel):
     must_change_password: bool = False
     manage_global_admins: bool = False
     can_delete_data: bool = False
-    mfa_enabled: bool = False
 
 class UserCreatedOut(UserOut):
     temp_password: str

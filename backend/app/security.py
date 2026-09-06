@@ -1,16 +1,8 @@
-"""Authentication, authorization, tenant scoping and TOTP helpers."""
+"""Authentication, authorization and tenant scoping."""
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
-import secrets
-import struct
-import time
-from urllib.parse import quote, urlencode
 from datetime import datetime, timedelta, timezone
 
-from cryptography.fernet import Fernet, InvalidToken
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
@@ -52,7 +44,7 @@ def password_is_strong(raw: str) -> bool:
     return len(raw) >= 10
 
 
-def _encode_token(user: User, purpose: str, minutes: int, *, mfa: bool = False) -> str:
+def _encode_token(user: User, purpose: str, minutes: int) -> str:
     now = datetime.now(timezone.utc)
     return jwt.encode(
         {
@@ -60,7 +52,6 @@ def _encode_token(user: User, purpose: str, minutes: int, *, mfa: bool = False) 
             "username": user.username,
             "purpose": purpose,
             "ver": user.token_version,
-            "mfa": mfa,
             "iat": now,
             "exp": now + timedelta(minutes=minutes),
         },
@@ -69,22 +60,11 @@ def _encode_token(user: User, purpose: str, minutes: int, *, mfa: bool = False) 
     )
 
 
-def create_access_token(user: User, *, mfa_verified: bool = False) -> str:
-    return _encode_token(
-        user,
-        "access",
-        settings.ACCESS_TOKEN_EXPIRE_MINUTES,
-        mfa=mfa_verified or user.role != ROLE_GLOBAL_ADMIN,
-    )
+def create_access_token(user: User) -> str:
+    return _encode_token(user, "access", settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
 
-def create_mfa_token(user: User, purpose: str) -> str:
-    if purpose not in {"mfa_challenge", "mfa_setup"}:
-        raise ValueError("invalid MFA token purpose")
-    return _encode_token(user, purpose, settings.MFA_TOKEN_EXPIRE_MINUTES)
-
-
-def decode_user_token(token: str, db: Session, *, purpose: str) -> tuple[User, dict]:
+def decode_user_token(token: str, db: Session, *, purpose: str = "access") -> User:
     credentials_error = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="اعتبارسنجی ناموفق بود",
@@ -107,14 +87,11 @@ def decode_user_token(token: str, db: Session, *, purpose: str) -> tuple[User, d
         if user.must_change_password:
             raise HTTPException(status_code=403, detail="ابتدا باید رمز عبور موقت خود را تغییر دهید")
         raise credentials_error
-    return user, payload
+    return user
 
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
-    user, payload = decode_user_token(token, db, purpose="access")
-    if user.role == ROLE_GLOBAL_ADMIN and (not user.mfa_enabled or not payload.get("mfa")):
-        raise HTTPException(status_code=401, detail="تأیید دومرحله‌ای مدیر کل الزامی است")
-    return user
+    return decode_user_token(token, db)
 
 
 def require_password_changed(user: User = Depends(get_current_user)) -> User:
@@ -171,63 +148,3 @@ def resolve_scope_organization(
         # 404 avoids confirming that another tenant's identifier exists.
         raise HTTPException(status_code=404, detail="یافت نشد")
     return user.organization_id
-
-
-def _fernet() -> Fernet:
-    key = base64.urlsafe_b64encode(hashlib.sha256(settings.SECRET_KEY.encode()).digest())
-    return Fernet(key)
-
-
-def encrypt_mfa_secret(secret: str) -> str:
-    return _fernet().encrypt(secret.encode()).decode()
-
-
-def decrypt_mfa_secret(value: str) -> str:
-    try:
-        return _fernet().decrypt(value.encode()).decode()
-    except (InvalidToken, ValueError):
-        raise HTTPException(status_code=500, detail="کلید MFA قابل خواندن نیست")
-
-
-def verify_totp(user: User, code: str) -> bool:
-    if not user.mfa_secret_enc:
-        return False
-    secret = decrypt_mfa_secret(user.mfa_secret_enc)
-    supplied = (code or "").replace(" ", "")
-    if not supplied.isdigit() or len(supplied) != 6:
-        return False
-    counter = int(time.time()) // 30
-    return any(hmac.compare_digest(supplied, _totp_at(secret, counter + offset)) for offset in (-1, 0, 1))
-
-
-def generate_totp_secret() -> str:
-    return base64.b32encode(secrets.token_bytes(20)).decode().rstrip("=")
-
-
-def _totp_at(secret: str, counter: int) -> str:
-    padded = secret + "=" * ((8 - len(secret) % 8) % 8)
-    key = base64.b32decode(padded, casefold=True)
-    digest = hmac.new(key, struct.pack(">Q", counter), hashlib.sha1).digest()
-    offset = digest[-1] & 0x0F
-    value = (struct.unpack(">I", digest[offset:offset + 4])[0] & 0x7FFFFFFF) % 1_000_000
-    return f"{value:06d}"
-
-
-def totp_provisioning_uri(secret: str, username: str, issuer: str) -> str:
-    label = quote(f"{issuer}:{username}")
-    return f"otpauth://totp/{label}?{urlencode({'secret': secret, 'issuer': issuer, 'digits': 6, 'period': 30})}"
-
-
-def generate_recovery_codes(count: int = 8) -> tuple[list[str], list[str]]:
-    raw = [f"{secrets.token_hex(4)}-{secrets.token_hex(4)}" for _ in range(count)]
-    return raw, [hash_password(code) for code in raw]
-
-
-def consume_recovery_code(user: User, code: str) -> bool:
-    hashes = list(user.mfa_recovery_hashes or [])
-    for idx, hashed in enumerate(hashes):
-        if verify_password(code, hashed):
-            hashes.pop(idx)
-            user.mfa_recovery_hashes = hashes
-            return True
-    return False

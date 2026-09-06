@@ -66,7 +66,7 @@ def _user_payload(user: User) -> dict:
         "role": user.role, "is_active": user.is_active, "is_admin": user.is_admin,
         "must_change_password": user.must_change_password,
         "manage_global_admins": user.manage_global_admins,
-        "can_delete_data": user.can_delete_data, "mfa_enabled": user.mfa_enabled,
+        "can_delete_data": user.can_delete_data,
     }
 
 
@@ -338,8 +338,6 @@ def set_role(
     target.role = data.role
     target.manage_global_admins = data.manage_global_admins
     target.can_delete_data = data.can_delete_data
-    if data.role != ROLE_GLOBAL_ADMIN:
-        target.mfa_enabled = False; target.mfa_secret_enc = None; target.mfa_recovery_hashes = []
     target.token_version += 1
     audit_event(db, action="ROLE_CHANGED", entity="user", entity_id=target.id,
                 organization_id=target.organization_id, actor=user, request=request,

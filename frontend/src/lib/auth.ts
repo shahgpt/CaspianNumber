@@ -19,7 +19,6 @@ export interface Session {
   role: Role
   manage_global_admins: boolean
   can_delete_data: boolean
-  mfa_enabled: boolean
   must_change_password: boolean
 }
 

@@ -1,7 +1,6 @@
-"""Adversarial tenant-isolation, privilege and MFA tests."""
+"""Adversarial tenant-isolation and privilege tests."""
 import os
 import tempfile
-import time
 import uuid
 
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{tempfile.mkdtemp()}/test.db")
@@ -16,7 +15,7 @@ from app.models import (
     ORG_FACTORY, ROLE_GLOBAL_ADMIN, ROLE_HEAD_OFFICE_ACCESS_ADMIN, ROLE_UNIT_MANAGER, ROLE_UNIT_USER,
     ChangeLog, Employee, Organization, SessionLocal, User, init_db,
 )
-from app.security import _totp_at, hash_password
+from app.security import hash_password
 
 client = TestClient(app)
 
@@ -204,29 +203,23 @@ def test_self_escalation_is_rejected_and_role_change_is_audited():
         assert row["actor_name"] == "root"
 
 
-def test_global_admin_requires_mfa_then_can_view_all_or_one_unit():
+def test_global_admin_can_view_all_units_or_one_unit():
     with client:
         a_id, b_id, _, _, _, _ = _seed_two_units()
         db = SessionLocal()
         try:
             head_id = db.query(Organization).filter(Organization.kind == "HEAD_OFFICE").first().id
-            username = _name("global-mfa")
+            username = _name("global")
             db.add(User(username=username, password_hash=hash_password("global-password"),
                         organization_id=head_id, role=ROLE_GLOBAL_ADMIN, can_delete_data=True))
             db.commit()
         finally:
             db.close()
 
+        # A plain username/password login is the whole gate, for every role.
         login = _login(username, "global-password")
-        assert login["access_token"] == "" and login["mfa_setup_required"] is True
-        setup = client.post("/api/auth/mfa/setup", json={"mfa_token": login["mfa_token"]})
-        assert setup.status_code == 200, setup.text
-        code = _totp_at(setup.json()["secret"], int(time.time()) // 30)
-        enabled = client.post("/api/auth/mfa/enable", json={"mfa_token": login["mfa_token"], "code": code})
-        assert enabled.status_code == 200, enabled.text
-        assert len(enabled.json()["recovery_codes"]) == 8
-        recovery_code = enabled.json()["recovery_codes"][0]
-        headers = {"Authorization": f"Bearer {enabled.json()['access_token']}"}
+        assert login["access_token"]
+        headers = {"Authorization": f"Bearer {login['access_token']}"}
 
         all_rows = client.get("/api/employees", headers=headers)
         assert all_rows.status_code == 200
@@ -258,13 +251,3 @@ def test_global_admin_requires_mfa_then_can_view_all_or_one_unit():
         )
         assert scoped_write.status_code == 200, scoped_write.text
         assert scoped_write.json()["organization_id"] == a_id
-
-        challenge = _login(username, "global-password")
-        recovered = client.post("/api/auth/mfa/verify", json={
-            "mfa_token": challenge["mfa_token"], "recovery_code": recovery_code,
-        })
-        assert recovered.status_code == 200 and recovered.json()["access_token"]
-        reused = client.post("/api/auth/mfa/verify", json={
-            "mfa_token": challenge["mfa_token"], "recovery_code": recovery_code,
-        })
-        assert reused.status_code == 401

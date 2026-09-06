@@ -67,9 +67,6 @@ class User(Base):
     manage_global_admins = Column(Boolean, default=False, nullable=False)
     can_delete_data = Column(Boolean, default=False, nullable=False)
     token_version = Column(Integer, default=0, nullable=False)
-    mfa_enabled = Column(Boolean, default=False, nullable=False)
-    mfa_secret_enc = Column(Text, nullable=True)
-    mfa_recovery_hashes = Column(JSON, nullable=False, default=list)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -213,9 +210,6 @@ def _migrate_sqlite() -> None:
             _add_sqlite_column(conn, "users", user_cols, "manage_global_admins", "BOOLEAN NOT NULL DEFAULT 0")
             _add_sqlite_column(conn, "users", user_cols, "can_delete_data", "BOOLEAN NOT NULL DEFAULT 0")
             _add_sqlite_column(conn, "users", user_cols, "token_version", "INTEGER NOT NULL DEFAULT 0")
-            _add_sqlite_column(conn, "users", user_cols, "mfa_enabled", "BOOLEAN NOT NULL DEFAULT 0")
-            _add_sqlite_column(conn, "users", user_cols, "mfa_secret_enc", "TEXT")
-            _add_sqlite_column(conn, "users", user_cols, "mfa_recovery_hashes", "JSON NOT NULL DEFAULT '[]'")
             _add_sqlite_column(conn, "users", user_cols, "must_change_password", "BOOLEAN NOT NULL DEFAULT 0")
             _add_sqlite_column(conn, "users", user_cols, "updated_at", "DATETIME")
             if "is_admin" in user_cols:
