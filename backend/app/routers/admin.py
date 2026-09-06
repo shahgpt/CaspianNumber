@@ -401,6 +401,37 @@ def reset_password(
     return {"username": target.username, "temp_password": temp_password}
 
 
+@router.delete("/users/{user_id}")
+def delete_user(
+    user_id: int, request: Request,
+    user: User = Depends(require_admin), db: Session = Depends(get_db),
+):
+    _require_delete(user)
+    target = _user_or_404(db, user_id, user)
+    if target.id == user.id:
+        raise HTTPException(400, "حساب خودتان را نمی‌توانید حذف کنید")
+    _require_privileged_account_management(user, target)
+    if target.is_root:
+        raise HTTPException(400, "حساب مدیر سامانه را نمی‌توان حذف کرد")
+
+    # Read the fields before the delete: after it, the instance is expired.
+    username = target.username
+    organization_id = target.organization_id
+    role_before = target.role
+    # The trail outlives the account: rows keep actor_name, and only the foreign
+    # key is released. Deleting a person must not delete what they did.
+    db.query(ChangeLog).filter(ChangeLog.actor_id == target.id).update(
+        {ChangeLog.actor_id: None}, synchronize_session=False
+    )
+    db.delete(target)
+    audit_event(db, action="USER_DELETED", entity="user", entity_id=user_id,
+                organization_id=organization_id, actor=user, request=request,
+                target_user_id=user_id, role_before=role_before,
+                details={"username": username})
+    db.commit()
+    return {"ok": True, "username": username}
+
+
 @router.post("/users/{user_id}/toggle-active")
 def toggle_active(
     user_id: int, request: Request,

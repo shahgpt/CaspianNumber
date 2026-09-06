@@ -150,6 +150,9 @@ export default function Select({
     switch (e.key) {
       case 'Escape':
         e.preventDefault()
+        // برگه‌ی مودالِ بیرون هم به Escape گوش می‌دهد؛ اگر رد شود، یک
+        // فشار هم فهرست و هم برگه را می‌بندد.
+        e.stopPropagation()
         close()
         return
       case 'Tab':

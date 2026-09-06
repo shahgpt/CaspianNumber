@@ -334,3 +334,69 @@ def test_head_office_only_roles_are_refused_for_a_factory():
                 "username": _name("factory-elevated"), "organization_id": a_id, "role": role,
             })
             assert refused.status_code == 400, f"{role}: {refused.text}"
+
+
+def test_deleting_an_account_keeps_what_that_account_did():
+    with client:
+        root = _headers("root", "root-pass")
+        head_id = next(o["id"] for o in client.get("/api/admin/organizations", headers=root).json()
+                       if o["kind"] == "HEAD_OFFICE")
+        username = _name("temp-hire")
+        created = client.post("/api/admin/users", headers=root,
+                              json={"username": username, "organization_id": head_id})
+        assert created.status_code == 200, created.text
+        target_id = created.json()["id"]
+
+        removed = client.delete(f"/api/admin/users/{target_id}", headers=root)
+        assert removed.status_code == 200, removed.text
+        assert client.delete(f"/api/admin/users/{target_id}", headers=root).status_code == 404
+
+        db = SessionLocal()
+        try:
+            assert db.get(User, target_id) is None
+            # Their creation is still on the record, with the actor's name intact.
+            trail = db.query(ChangeLog).filter(
+                ChangeLog.target_user_id == target_id,
+            ).order_by(ChangeLog.id).all()
+            assert [row.action for row in trail] == ["USER_CREATED", "USER_DELETED"]
+            assert all(row.actor_name == "root" for row in trail)
+        finally:
+            db.close()
+
+
+def test_neither_yourself_nor_the_root_account_can_be_deleted():
+    with client:
+        root = _headers("root", "root-pass")
+        me = client.get("/api/auth/me", headers=root).json()
+        assert client.delete(f"/api/admin/users/{me['id']}", headers=root).status_code == 400
+
+        db = SessionLocal()
+        try:
+            head_id = db.query(Organization).filter(Organization.kind == "HEAD_OFFICE").first().id
+            attacker = _name("hq-access")
+            db.add(User(username=attacker, password_hash=hash_password("attacker-pass"),
+                        organization_id=head_id, role=ROLE_HEAD_OFFICE_ACCESS_ADMIN,
+                        can_delete_data=True))
+            db.commit()
+            root_id = db.query(User).filter(User.username == "root").first().id
+        finally:
+            db.close()
+        assert client.delete(f"/api/admin/users/{root_id}",
+                             headers=_headers(attacker, "attacker-pass")).status_code == 403
+
+
+def test_deleting_an_account_needs_the_delete_permission():
+    with client:
+        a_id, _, _, _, _, _ = _seed_two_units()
+        db = SessionLocal()
+        try:
+            weak = _name("no-delete-manager")
+            db.add(User(username=weak, password_hash=hash_password("weak-pass"),
+                        organization_id=a_id, role=ROLE_UNIT_MANAGER, can_delete_data=False))
+            victim = User(username=_name("victim"), password_hash=hash_password("victim-pass"),
+                          organization_id=a_id, role=ROLE_UNIT_USER)
+            db.add(victim); db.commit(); victim_id = victim.id
+        finally:
+            db.close()
+        assert client.delete(f"/api/admin/users/{victim_id}",
+                             headers=_headers(weak, "weak-pass")).status_code == 403

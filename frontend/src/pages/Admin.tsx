@@ -6,6 +6,7 @@ import { Link } from 'react-router-dom'
 import { LogOut } from 'lucide-react'
 import { api, toEnDigits } from '../lib/api'
 import { forgetSession, useSession } from '../lib/auth'
+import { useDialog } from '../lib/dialog'
 import BrandLockup from '../components/BrandLockup'
 import ThemeToggle from '../components/ThemeToggle'
 import Select from '../components/ui/select'
@@ -127,6 +128,7 @@ const LOG_VERBS: Record<string, { verb: string; tone: Tone }> = {
   BULK_DELETE: { verb: 'حذف گروهی کرد', tone: 'remove' },
   IMPORT: { verb: 'ایمپورت کرد', tone: 'add' },
   USER_CREATED: { verb: 'حساب ساخت', tone: 'add' },
+  USER_DELETED: { verb: 'حساب را حذف کرد:', tone: 'remove' },
   ROLE_CHANGED: { verb: 'سطح دسترسی را تغییر داد برای', tone: 'edit' },
   CREDENTIALS_CHANGED: { verb: 'مشخصات ورود را تغییر داد برای', tone: 'edit' },
   PASSWORD_RESET: { verb: 'رمز موقت ساخت برای', tone: 'edit' },
@@ -410,6 +412,9 @@ export default function Admin() {
   const [accessEditing, setAccessEditing] = useState<AdminUser | null>(null)
   const [accessDraft, setAccessDraft] = useState<AccessDraft | null>(null)
   const [accessBusy, setAccessBusy] = useState(false)
+  /* حذفِ حساب برگشت ندارد، پس نامِ صاحبش را می‌پرسد پیش از انجام. */
+  const [deleting, setDeleting] = useState<AdminUser | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
   const [newUser, setNewUser] = useState<AccessDraft & { username: string }>({
     username: '', role: 'UNIT_USER', can_delete_data: false,
   })
@@ -483,6 +488,19 @@ export default function Admin() {
   const sheetRef = useRef<HTMLFormElement>(null)
   const barRef = useRef<HTMLDivElement>(null)
   const confirmRef = useRef<HTMLDivElement>(null)
+
+  /* هر برگه‌ی مودال فوکوس را نگه می‌دارد و با Escape بسته می‌شود؛ بستنِ
+     برگه فوکوس را به همان دکمه‌ای برمی‌گرداند که بازش کرده بود. */
+  const bulkDialogRef = useDialog<HTMLDivElement>(confirmBulk, () => !bulkBusy && setConfirmBulk(false))
+  const issuedDialogRef = useDialog<HTMLDivElement>(issued !== null, () => setIssued(null))
+  const accessDialogRef = useDialog<HTMLDivElement>(accessEditing !== null, () => {
+    if (accessBusy) return
+    setAccessEditing(null)
+    setAccessDraft(null)
+  })
+  const credDialogRef = useDialog<HTMLDivElement>(credEditing !== null, () => setCredEditing(null))
+  const deleteDialogRef = useDialog<HTMLDivElement>(deleting !== null, () => !deleteBusy && setDeleting(null))
+  const editDialogRef = useDialog<HTMLDivElement>(editing !== null, () => setEditing(null))
 
   // زیرخطِ متحرک تب‌ها — با هر تغییر تب سر جایش می‌لغزد،
   // و با تغییر اندازه‌ی پنجره دوباره اندازه‌گیری می‌شود
@@ -623,11 +641,8 @@ export default function Admin() {
         clearProps: 'filter',
       })
     }
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setEditing(null)
-    window.addEventListener('keydown', onKey)
     document.body.style.overflow = 'hidden'
     return () => {
-      window.removeEventListener('keydown', onKey)
       document.body.style.overflow = ''
     }
   }, [modalOpen])
@@ -849,6 +864,21 @@ export default function Admin() {
       qc.invalidateQueries({ queryKey: ['admin-users'] })
     } catch (err) {
       flashNotice(err instanceof Error ? err.message : 'خطا در تغییر وضعیت', 4000)
+    }
+  }
+
+  async function deleteUser() {
+    if (!deleting) return
+    setDeleteBusy(true)
+    try {
+      await api(`/api/admin/users/${deleting.id}`, { method: 'DELETE' })
+      flashNotice(`حساب ${deleting.username} حذف شد`)
+      setDeleting(null)
+      qc.invalidateQueries({ queryKey: ['admin-users'] })
+    } catch (err) {
+      flashNotice(err instanceof Error ? err.message : 'حذف حساب انجام نشد', 4000)
+    } finally {
+      setDeleteBusy(false)
     }
   }
 
@@ -1452,6 +1482,21 @@ export default function Admin() {
                             >
                               {u.is_active ? 'غیرفعال' : 'فعال'}‌سازی
                             </button>
+                            <button
+                              onClick={() => setDeleting(u)}
+                              disabled={isSelf || u.is_root}
+                              title={
+                                isSelf
+                                  ? 'حساب خودتان را نمی‌توانید حذف کنید'
+                                  : u.is_root
+                                    ? 'حساب مدیر سامانه حذف نمی‌شود'
+                                    : undefined
+                              }
+                              aria-describedby={isSelf ? `self-${u.id}` : undefined}
+                              className="rounded text-xs text-red-500 underline-offset-4 transition-colors hover:text-red-600 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/40 disabled:cursor-not-allowed disabled:text-ink-300 disabled:no-underline"
+                            >
+                              حذف
+                            </button>
                           </span>
                         </td>
                       </tr>
@@ -1758,6 +1803,7 @@ export default function Admin() {
           می‌شوند نشان بدهد، نه فقط عددشان را. */}
       {confirmBulk && (
         <div
+          ref={bulkDialogRef}
           role="dialog"
           aria-modal="true"
           aria-label="تأیید حذف گروهی"
@@ -1823,6 +1869,7 @@ export default function Admin() {
       {/* رمزِ موقت — یک‌بار و همین یک‌بار */}
       {issued && (
         <div
+          ref={issuedDialogRef}
           role="dialog"
           aria-modal="true"
           aria-label={`رمز موقت ${issued.username}`}
@@ -1894,6 +1941,7 @@ export default function Admin() {
           صریحِ خودش را دارد. */}
       {accessEditing && accessDraft && (
         <div
+          ref={accessDialogRef}
           role="dialog"
           aria-modal="true"
           aria-label={`سطح دسترسی ${accessEditing.username}`}
@@ -1971,8 +2019,71 @@ export default function Admin() {
         </div>
       )}
 
+      {/* حذفِ حساب برگشت ندارد. برگه می‌گوید چه چیزی می‌ماند و چه چیزی
+          می‌رود، چون «حذف شد» بدونِ این دو، خبرِ ناقصی است. */}
+      {deleting && (
+        <div
+          ref={deleteDialogRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label={`حذف حساب ${deleting.username}`}
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !deleteBusy) setDeleting(null)
+          }}
+          className="fixed inset-0 z-50 flex items-end justify-center bg-deep-950/45 p-0 backdrop-blur-sm sm:items-center sm:p-6"
+        >
+          <div className="w-full max-w-md space-y-4 rounded-t-2xl border border-sand-200 bg-paper p-6 shadow-panel sm:rounded-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <h2 className="text-lg font-bold text-ink-900">حذف حساب</h2>
+              <button
+                type="button"
+                onClick={() => setDeleting(null)}
+                aria-label="بستن"
+                className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-ink-400 transition-colors duration-200 hover:bg-sand-100 hover:text-ink-700"
+              >
+                <CloseIcon className="h-4 w-4" />
+              </button>
+            </div>
+
+            <p className="text-sm text-ink-500">
+              <span dir="ltr" className="font-medium text-ink-900">{deleting.username}</span>
+              <span className="mx-1.5 text-sand-300">·</span>
+              {roleLabel(deleting.role)}
+              <span className="mx-1.5 text-sand-300">·</span>
+              {deleting.organization_name || 'بدون واحد'}
+            </p>
+
+            <ul className="space-y-1.5 rounded-xl border border-sand-200 bg-sand-50/60 p-3.5 text-[12.5px] leading-relaxed text-ink-600">
+              <li>این حساب دیگر نمی‌تواند وارد شود و از فهرست پاک می‌شود.</li>
+              <li>پروندهٔ پرسنلیِ این شخص در دفترچه دست‌نخورده می‌ماند — حساب و پرونده دو چیزند.</li>
+              <li>کارهایی که با این حساب انجام شده در تبِ «تغییرات» با همان نام باقی می‌ماند.</li>
+            </ul>
+
+            <div className="flex gap-3 pt-1">
+              <button
+                type="button"
+                onClick={deleteUser}
+                disabled={deleteBusy}
+                className="flex-1 rounded-xl bg-red-500 py-3 font-medium text-white transition-colors duration-200 hover:bg-red-600 active:scale-[.98] disabled:opacity-60"
+              >
+                {deleteBusy ? 'در حال حذف…' : 'بله، حذف کن'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setDeleting(null)}
+                disabled={deleteBusy}
+                className="rounded-xl bg-sand-100 px-6 text-ink-700 transition-colors hover:bg-sand-200 disabled:opacity-60"
+              >
+                انصراف
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {credEditing && (
         <div
+          ref={credDialogRef}
           role="dialog"
           aria-modal="true"
           aria-label={`نام کاربری و رمز ${credEditing.username}`}
@@ -2044,7 +2155,10 @@ export default function Admin() {
       {/* edit modal */}
       {editing && (
         <div
-          ref={overlayRef}
+          ref={(node) => {
+            overlayRef.current = node
+            editDialogRef.current = node
+          }}
           role="dialog"
           aria-modal="true"
           aria-label={editing.id ? 'ویرایش پرسنل' : 'افزودن پرسنل جدید'}

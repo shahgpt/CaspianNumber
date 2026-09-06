@@ -189,6 +189,24 @@ def _sqlite_columns(conn, table: str) -> set[str]:
     return {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))}
 
 
+def _drop_sqlite_column(conn, table: str, columns: set[str], name: str) -> None:
+    """Remove a column the ORM no longer writes.
+
+    `is_admin` is the case this exists for: created NOT NULL with no SQL default
+    by an old `create_all`, then turned into a computed property. Left in place
+    it rejects every INSERT. DROP COLUMN needs SQLite 3.35+; on anything older
+    the column keeps whatever default it already had, which is the state that
+    was working before.
+    """
+    if name not in columns:
+        return
+    try:
+        conn.execute(text(f"ALTER TABLE {table} DROP COLUMN {name}"))
+    except Exception:
+        return
+    columns.discard(name)
+
+
 def _add_sqlite_column(conn, table: str, columns: set[str], name: str, ddl: str) -> None:
     if name not in columns:
         conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
@@ -216,6 +234,7 @@ def _migrate_sqlite() -> None:
             _add_sqlite_column(conn, "users", user_cols, "updated_at", "DATETIME")
             if "is_admin" in user_cols:
                 conn.execute(text("UPDATE users SET role='UNIT_MANAGER', can_delete_data=1 WHERE is_admin=1 AND role='UNIT_USER'"))
+                _drop_sqlite_column(conn, "users", user_cols, "is_admin")
 
         log_cols = _sqlite_columns(conn, "change_log")
         if log_cols:
