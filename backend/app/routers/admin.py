@@ -453,18 +453,16 @@ async def import_file(
 
 @router.get("/logs")
 def list_logs(
-    request: Request, limit: int = 100, organization_id: int | None = None,
+    limit: int = 100, organization_id: int | None = None,
     user: User = Depends(require_admin), db: Session = Depends(get_db),
 ):
     scope = _scope(user, organization_id, db)
     query = db.query(ChangeLog)
     if scope is not None:
         query = query.filter(ChangeLog.organization_id == scope)
+    # Reading the log does not write to the log: that row is the only one every
+    # visit is guaranteed to produce, and it pushes real changes off the page.
     rows = query.order_by(ChangeLog.id.desc()).limit(max(1, min(limit, 500))).all()
-    audit_event(db, action="AUDIT_LOG_VIEW", entity="audit", actor=user,
-                organization_id=scope, request=request,
-                details={"count": len(rows), "all_units": scope is None})
-    db.commit()
     return [{
         "id": r.id, "organization_id": r.organization_id, "entity": r.entity,
         "entity_id": r.entity_id, "action": r.action, "actor_name": r.actor_name,

@@ -13,6 +13,7 @@ import ThemeToggle from '../components/ThemeToggle'
 import { countTo, createRevealer, faDigits, shouldAnimate } from '../lib/motion'
 import type { Revealer } from '../lib/motion'
 import { readPins, writePins } from '../lib/pins'
+import { roleLabel } from '../lib/roles'
 import { CONTOURS, SOUNDINGS } from './login-contours'
 
 /* قرارداد Impeccable — دنیای «نقشه‌ی عمق‌سنجی» (ادامه‌ی صفحه‌ی ورود)
@@ -452,17 +453,32 @@ export default function Directory() {
             </div>
           </div>
 
-          <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-ink-500">
-            <span className="rounded-xl border border-sand-200 bg-paper px-3 py-2">
-              محدودهٔ داده: <strong className="text-ink-900">{selectedOrg ? organizations?.find((org) => String(org.id) === selectedOrg)?.name : isGlobal ? 'همهٔ واحدها' : session?.organization_name || 'واحد شما'}</strong>
-            </span>
-            {isGlobal && (
-              <select aria-label="انتخاب واحد سازمانی" value={selectedOrg} onChange={(event) => setSelectedOrg(event.target.value)}
-                className="rounded-xl border border-sand-300 bg-paper px-3 py-2 text-sm text-ink-900">
+          {/* کاربرِ عادی هرگز جز واحدِ خودش چیزی نمی‌بیند: یک سطرِ کوتاه
+              کافی است. مدیر کل که واقعاً می‌تواند جابه‌جا شود، انتخاب‌گر
+              می‌گیرد — همان‌جا و در همان سطر. */}
+          <div className="mt-4 flex flex-wrap items-center gap-x-2.5 gap-y-2 text-[12.5px] text-ink-500">
+            <span>محدودهٔ داده</span>
+            {isGlobal ? (
+              <select
+                aria-label="انتخاب واحد سازمانی"
+                value={selectedOrg}
+                onChange={(event) => setSelectedOrg(event.target.value)}
+                className="rounded-lg border border-sand-300 bg-paper px-2.5 py-1 text-[12.5px] font-medium text-ink-900 transition-colors hover:border-sea-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sea-500/30"
+              >
                 <option value="">همهٔ واحدها</option>
-                {(organizations ?? []).filter((org) => org.is_active).map((org) => <option key={org.id} value={org.id}>{org.name}</option>)}
+                {(organizations ?? []).filter((org) => org.is_active).map((org) => (
+                  <option key={org.id} value={org.id}>{org.name}</option>
+                ))}
               </select>
+            ) : (
+              <strong className="font-medium text-ink-900">
+                {session?.organization_name || 'واحد شما'}
+              </strong>
             )}
+            <span aria-hidden="true" className="text-sand-300">·</span>
+            <span>
+              نقش شما <strong className="font-medium text-ink-900">{roleLabel(session?.role)}</strong>
+            </span>
           </div>
 
           {/* مقیاسِ نقشه — مرزِ عنوان با ابزار، امضای مشترک با صفحه‌ی ورود */}

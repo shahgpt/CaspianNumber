@@ -11,6 +11,18 @@ import ThemeToggle from '../components/ThemeToggle'
 import type { Employee } from '../lib/api'
 import { createRevealer, faDigits, shouldAnimate } from '../lib/motion'
 import type { Revealer } from '../lib/motion'
+import {
+  PERMISSION_LABELS,
+  ROLE_LABELS,
+  ROLE_NOTES,
+  ROLE_ORDER,
+  deleteIsImplicit,
+  isElevated,
+  normalizeAccess,
+  organizationKindLabel,
+  roleLabel,
+} from '../lib/roles'
+import type { Role } from '../lib/roles'
 import { CONTOURS } from './login-contours'
 import {
   BookIcon,
@@ -87,6 +99,7 @@ type LogEntry = {
   action: string
   entity: string
   entity_id: number | null
+  organization_id: number | null
   actor_name: string
   actor_role?: string | null
   role_before?: string | null
@@ -118,21 +131,44 @@ const LOG_VERBS: Record<string, { verb: string; tone: Tone }> = {
   PASSWORD_RESET: { verb: 'رمز موقت ساخت برای', tone: 'edit' },
   ACCOUNT_STATUS_CHANGED: { verb: 'وضعیت حساب را تغییر داد برای', tone: 'edit' },
   PASSWORD_CHANGED: { verb: 'رمز عبور را تغییر داد برای', tone: 'edit' },
-  LOGIN_SUCCESS: { verb: 'وارد سامانه شد؛', tone: 'add' },
-  LOGIN_FAILED: { verb: 'ورود ناموفق داشت؛', tone: 'remove' },
-  LOGIN_BLOCKED: { verb: 'به‌دلیل تلاش‌های ورود مسدود شد؛', tone: 'remove' },
-  MFA_SETUP_STARTED: { verb: 'راه‌اندازی ورود دومرحله‌ای را آغاز کرد؛', tone: 'edit' },
-  MFA_SETUP_REQUIRED: { verb: 'نیازمند راه‌اندازی ورود دومرحله‌ای شد؛', tone: 'edit' },
-  MFA_ENABLED: { verb: 'ورود دومرحله‌ای را فعال کرد؛', tone: 'add' },
-  MFA_CHALLENGE: { verb: 'به مرحلهٔ تأیید دومرحله‌ای رسید؛', tone: 'edit' },
-  MFA_FAILED: { verb: 'تأیید دومرحله‌ای ناموفق داشت؛', tone: 'remove' },
-  MFA_SUCCESS: { verb: 'ورود دومرحله‌ای را تأیید کرد؛', tone: 'add' },
-  DIRECTORY_VIEW: { verb: 'فهرست را مشاهده کرد؛', tone: 'edit' },
-  SENSITIVE_LIST_VIEW: { verb: 'فهرست حساس را مشاهده کرد؛', tone: 'edit' },
-  VCARD_VIEW: { verb: 'کارت تماس را مشاهده کرد؛', tone: 'edit' },
-  AUDIT_LOG_VIEW: { verb: 'گزارش فعالیت را مشاهده کرد؛', tone: 'edit' },
-  ORGANIZATION_CREATED: { verb: 'واحد سازمانی ساخت؛', tone: 'add' },
-  ORGANIZATION_UPDATED: { verb: 'واحد سازمانی را ویرایش کرد؛', tone: 'edit' },
+  LOGIN_SUCCESS: { verb: 'وارد سامانه شد', tone: 'add' },
+  LOGIN_FAILED: { verb: 'ورود ناموفق داشت', tone: 'remove' },
+  LOGIN_BLOCKED: { verb: 'به‌دلیل تلاش‌های ورود مسدود شد', tone: 'remove' },
+  MFA_SETUP_STARTED: { verb: 'راه‌اندازی ورود دومرحله‌ای را آغاز کرد', tone: 'edit' },
+  MFA_SETUP_REQUIRED: { verb: 'نیازمند راه‌اندازی ورود دومرحله‌ای شد', tone: 'edit' },
+  MFA_ENABLED: { verb: 'ورود دومرحله‌ای را فعال کرد', tone: 'add' },
+  MFA_CHALLENGE: { verb: 'به مرحلهٔ تأیید دومرحله‌ای رسید', tone: 'edit' },
+  MFA_FAILED: { verb: 'تأیید دومرحله‌ای ناموفق داشت', tone: 'remove' },
+  MFA_SUCCESS: { verb: 'ورود دومرحله‌ای را تأیید کرد', tone: 'add' },
+  DIRECTORY_VIEW: { verb: 'جستجو کرد در', tone: 'edit' },
+  SENSITIVE_LIST_VIEW: { verb: 'باز کرد', tone: 'edit' },
+  VCARD_VIEW: { verb: 'کارت تماس گرفت از', tone: 'edit' },
+  AUDIT_LOG_VIEW: { verb: 'باز کرد', tone: 'edit' },
+  ORGANIZATION_CREATED: { verb: 'واحد سازمانی ساخت', tone: 'add' },
+  ORGANIZATION_UPDATED: { verb: 'واحد سازمانی را ویرایش کرد', tone: 'edit' },
+}
+
+/* رویدادهای «فقط خواندن». دفتر باید نگهشان دارد — بندِ «مشاهده‌ی حساس» —
+   ولی کسی که دنبالِ یک تغییر می‌گردد نباید از میانشان رد شود. پیش‌فرض
+   پنهان‌اند و با یک صافی برمی‌گردند. */
+const READ_ACTIONS = new Set([
+  'DIRECTORY_VIEW',
+  'SENSITIVE_LIST_VIEW',
+  'VCARD_VIEW',
+  'AUDIT_LOG_VIEW',
+])
+
+/** آنچه باز شده، به نامِ خودش نه به شماره‌ی رکوردی که اصلاً وجود ندارد.
+    کارتِ تماس اینجا نیست: آن یک نفرِ مشخص است و نامش را دارد. */
+const LIST_NOUNS: Record<string, string> = {
+  employee: 'فهرست پرسنل',
+  user: 'فهرست حساب‌ها',
+  audit: 'گزارش فعالیت‌ها',
+}
+
+const READ_SUBJECTS: Record<string, string> = {
+  DIRECTORY_VIEW: 'دفترچه',
+  AUDIT_LOG_VIEW: 'گزارش فعالیت‌ها',
 }
 
 const TONE_DOT: Record<Tone, string> = {
@@ -146,6 +182,7 @@ const LOG_FILTERS = [
   ['employee', 'پرسنل'],
   ['user', 'حساب‌ها'],
   ['import', 'ایمپورت'],
+  ['reads', 'مشاهده‌ها'],
 ] as const
 
 /* برچسبِ فارسیِ فیلدها را از همان فرمِ ویرایش قرض می‌گیریم؛ راهنمای داخل
@@ -176,7 +213,8 @@ function describeLog(l: LogEntry, subject: string) {
       }
     }
   } else if (l.action === 'bulk_delete') {
-    const names = Array.isArray(d.names) ? (d.names as string[]) : []
+    // نامِ خالی در لاگ‌های قدیمی هست؛ چیدنشان کنار هم یک ردیف ویرگول می‌سازد.
+    const names = (Array.isArray(d.names) ? (d.names as string[]) : []).filter((n) => String(n).trim())
     if (names.length) lines.push(names.join('، '))
   } else if (l.action === 'toggle_admin') {
     lines.push(d.is_admin ? 'دسترسیِ مدیریت داده شد' : 'دسترسیِ مدیریت گرفته شد')
@@ -192,11 +230,20 @@ function describeLog(l: LogEntry, subject: string) {
     const errors = Array.isArray(d.errors) ? d.errors.length : 0
     if (errors) lines.push(`${faDigits(errors)} سطر خطا داشت`)
   } else if (l.action === 'ROLE_CHANGED') {
-    lines.push(`نقش: ${logValue(l.role_before)} ← ${logValue(l.role_after)}`)
-    if ('manage_global_admins' in d) lines.push(`مجوز مدیریت مدیران کل: ${d.manage_global_admins ? 'دارد' : 'ندارد'}`)
-    if ('can_delete_data' in d) lines.push(`مجوز حذف داده: ${d.can_delete_data ? 'دارد' : 'ندارد'}`)
+    lines.push(`نقش: ${roleLabel(l.role_before)} ← ${roleLabel(l.role_after)}`)
+    if ('manage_global_admins' in d)
+      lines.push(`${PERMISSION_LABELS.manage_global_admins}: ${d.manage_global_admins ? 'دارد' : 'ندارد'}`)
+    if ('can_delete_data' in d)
+      lines.push(`${PERMISSION_LABELS.can_delete_data}: ${d.can_delete_data ? 'دارد' : 'ندارد'}`)
   } else if (l.action === 'ACCOUNT_STATUS_CHANGED') {
     lines.push(d.active ? 'حساب فعال شد' : 'حساب غیرفعال شد')
+  } else if (READ_ACTIONS.has(l.action)) {
+    // ردیف‌های هم‌جنسِ یک بازه سمتِ سرور در هم ادغام شده‌اند؛ اینجا فقط
+    // شمارشِ همان بازه خوانده می‌شود.
+    const repeats = Number(d.repeats ?? 1)
+    if (repeats > 1) lines.push(`${faDigits(repeats)} بار در همین بازه`)
+    const query = String(d.query ?? '').trim()
+    if (query) lines.push(`جستجو: «${query}»`)
   }
 
   return { verb, tone, subject, lines }
@@ -237,13 +284,94 @@ type AdminUser = {
   is_admin: boolean
   organization_id: number
   organization_name: string
-  role: 'UNIT_USER' | 'UNIT_MANAGER' | 'HEAD_OFFICE_ACCESS_ADMIN' | 'GLOBAL_ADMIN'
+  role: Role
   manage_global_admins: boolean
   can_delete_data: boolean
   mfa_enabled: boolean
 }
 
+/* آنچه یک حساب «می‌تواند بکند» — نقش و دو مجوز، با هم. جدا کردنشان همان
+   اشتباهی بود که مجوزِ حذف را بی‌سروصدا کنارِ تغییرِ نقش می‌داد. */
+type AccessDraft = {
+  role: Role
+  manage_global_admins: boolean
+  can_delete_data: boolean
+}
+
 type Organization = { id: number; name: string; code: string; kind: 'HEAD_OFFICE' | 'FACTORY'; is_active: boolean }
+
+/* نقش و مجوزها یک‌جا انتخاب می‌شوند — هم موقعِ ساختِ حساب، هم موقعِ
+   تغییرِ دسترسیِ حسابِ موجود. یک واژگان، یک پیاده‌سازی. */
+function AccessFields({
+  idPrefix,
+  value,
+  canGrantElevated,
+  onChange,
+}: {
+  idPrefix: string
+  value: AccessDraft
+  canGrantElevated: boolean
+  onChange: (next: AccessDraft) => void
+}) {
+  const roles = ROLE_ORDER.filter((r) => canGrantElevated || !isElevated(r) || r === value.role)
+  const set = (patch: Partial<AccessDraft>) => onChange(normalizeAccess({ ...value, ...patch }))
+
+  return (
+    <>
+      <div>
+        <label htmlFor={`${idPrefix}-role`} className="mb-1.5 block text-xs font-medium text-ink-500">
+          نقش
+        </label>
+        <select
+          id={`${idPrefix}-role`}
+          value={value.role}
+          onChange={(e) => set({ role: e.target.value as Role })}
+          className="w-full rounded-xl border border-sand-300 bg-paper px-3 py-2 text-sm text-ink-900 transition-colors focus:border-sea-500 focus:outline-none focus:ring-2 focus:ring-sea-500/20"
+        >
+          {roles.map((r) => (
+            <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+          ))}
+        </select>
+        <p className="mt-1.5 text-[11.5px] leading-relaxed text-ink-400">{ROLE_NOTES[value.role]}</p>
+      </div>
+
+      {value.role !== 'UNIT_USER' && (
+        <fieldset className="sm:col-span-2">
+          <legend className="mb-2 text-xs font-medium text-ink-500">مجوزهای افزوده</legend>
+          <div className="flex flex-wrap gap-x-6 gap-y-2.5">
+            {deleteIsImplicit(value.role) ? (
+              <p className="text-[12.5px] text-ink-400">
+                مدیر کل سامانه {PERMISSION_LABELS.can_delete_data} را همیشه دارد.
+              </p>
+            ) : (
+              <label className="flex cursor-pointer select-none items-center gap-2 text-[13px] text-ink-700">
+                <input
+                  type="checkbox"
+                  className="pick"
+                  checked={value.can_delete_data}
+                  onChange={(e) => set({ can_delete_data: e.target.checked })}
+                />
+                {PERMISSION_LABELS.can_delete_data}
+              </label>
+            )}
+
+            {canGrantElevated && isElevated(value.role) && (
+              <label className="flex cursor-pointer select-none items-center gap-2 text-[13px] text-ink-700">
+                <input
+                  type="checkbox"
+                  className="pick"
+                  checked={value.manage_global_admins}
+                  onChange={(e) => set({ manage_global_admins: e.target.checked })}
+                />
+                {PERMISSION_LABELS.manage_global_admins}
+              </label>
+            )}
+          </div>
+        </fieldset>
+      )}
+    </>
+  )
+}
 
 /* رمزِ موقتی که تازه ساخته شده — یک‌بار نشان داده می‌شود و بعد از بسته‌شدنِ
    این کارت دیگر از هیچ‌جا خوانده نمی‌شود. */
@@ -278,7 +406,15 @@ export default function Admin() {
   const [issued, setIssued] = useState<IssuedCredential | null>(null)
   const [credEditing, setCredEditing] = useState<AdminUser | null>(null)
   const [credForm, setCredForm] = useState({ username: '', password: '' })
-  const [newUser, setNewUser] = useState({ username: '', role: 'UNIT_USER', manage_global_admins: false, can_delete_data: false })
+  /* تغییرِ دسترسی از یک `<select>` درجا بیرون آمد: انتخاب‌گر با هر فلشِ
+     صفحه‌کلید مقدار عوض می‌کند، و هر عوض‌شدن یک ارتقای واقعیِ دسترسی بود.
+     حالا نقش و دو مجوز با هم در یک برگه انتخاب و یک‌بار ثبت می‌شوند. */
+  const [accessEditing, setAccessEditing] = useState<AdminUser | null>(null)
+  const [accessDraft, setAccessDraft] = useState<AccessDraft | null>(null)
+  const [accessBusy, setAccessBusy] = useState(false)
+  const [newUser, setNewUser] = useState<AccessDraft & { username: string }>({
+    username: '', role: 'UNIT_USER', manage_global_admins: false, can_delete_data: false,
+  })
   const [newOrg, setNewOrg] = useState({ name: '', code: '', kind: 'FACTORY' })
   const [logFilter, setLogFilter] = useState<(typeof LOG_FILTERS)[number][0]>('all')
   const [logQuery, setLogQuery] = useState('')
@@ -291,6 +427,9 @@ export default function Admin() {
   })
   const directPrefix = health?.direct_prefix ?? ''
   const needsWriteScope = Boolean(isGlobal && !selectedOrg)
+  /* نقش‌های دفتر مرکزی فقط با مجوزِ صریح داده می‌شوند — همان قاعده‌ای که
+     سرور هم اعمالش می‌کند. رابط نباید گزینه‌ای بگذارد که همیشه رد می‌شود. */
+  const canGrantElevated = Boolean(session?.manage_global_admins)
   const scopeSuffix = selectedOrg ? `?organization_id=${selectedOrg}` : ''
   const scopeJoin = (path: string) => `${path}${path.includes('?') ? '&' : '?'}organization_id=${selectedOrg}`
 
@@ -324,7 +463,7 @@ export default function Admin() {
   // --- refs موشن ---
   const headRef = useRef<HTMLElement>(null)
   const ruleRef = useRef<HTMLSpanElement>(null)
-  const navRef = useRef<HTMLElement>(null)
+  const navRef = useRef<HTMLDivElement>(null)
   const underlineRef = useRef<HTMLSpanElement>(null)
   const placed = useRef(false)
   const switched = useRef(false)
@@ -345,8 +484,13 @@ export default function Admin() {
 
     function place(animate: boolean) {
       const active = nav?.querySelector<HTMLButtonElement>(`[data-tab="${tab}"]`)
-      if (!active || !line) return
+      if (!active || !line || !nav) return
+      /* اندازه‌گیری در چیدمانِ فرونشسته — تبِ پس‌زمینه، والدِ پنهان، لحظه‌ی
+         پیش از اولین چیدمان — عددِ بی‌معنا می‌دهد. ثبتِ همان عدد یعنی
+         نشانگر تا همیشه سرِ جای غلط می‌ماند، چون کسی دوباره نمی‌سنجدش. */
+      if (!nav.offsetWidth || !active.offsetWidth) return
       const to = { x: active.offsetLeft, width: active.offsetWidth, opacity: 1 }
+      gsap.killTweensOf(line)
       // بارِ اول و تغییرِ اندازه: بدون لغزش، سرِ جای درست
       if (!animate || !placed.current) {
         placed.current = true
@@ -699,19 +843,32 @@ export default function Admin() {
     }
   }
 
-  async function changeRole(u: AdminUser, role: AdminUser['role']) {
+  function openAccess(u: AdminUser) {
+    setAccessEditing(u)
+    setAccessDraft({
+      role: u.role,
+      manage_global_admins: u.manage_global_admins,
+      can_delete_data: u.can_delete_data,
+    })
+  }
+
+  async function saveAccess(e: React.FormEvent) {
+    e.preventDefault()
+    if (!accessEditing || !accessDraft) return
+    setAccessBusy(true)
     try {
-      await api(`/api/admin/users/${u.id}/role`, {
+      await api(`/api/admin/users/${accessEditing.id}/role`, {
         method: 'PATCH',
-        body: JSON.stringify({
-          role,
-          manage_global_admins: role === 'HEAD_OFFICE_ACCESS_ADMIN' ? u.manage_global_admins : false,
-          can_delete_data: role === 'UNIT_MANAGER' || role === 'HEAD_OFFICE_ACCESS_ADMIN' || role === 'GLOBAL_ADMIN',
-        }),
+        body: JSON.stringify(normalizeAccess(accessDraft)),
       })
+      setAccessEditing(null)
+      setAccessDraft(null)
+      flashNotice('سطح دسترسی ثبت شد؛ کاربر باید دوباره وارد شود')
       qc.invalidateQueries({ queryKey: ['admin-users'] })
     } catch (err) {
-      flashNotice(err instanceof Error ? err.message : 'خطا در تغییر نقش', 4000)
+      flashNotice(err instanceof Error ? err.message : 'تغییر دسترسی انجام نشد', 4000)
+    } finally {
+      setAccessBusy(false)
     }
   }
 
@@ -746,7 +903,10 @@ export default function Admin() {
     try {
       const res = await api<{ username: string; temp_password: string }>('/api/admin/users', {
         method: 'POST',
-        body: JSON.stringify({ ...newUser, organization_id: selectedOrg ? Number(selectedOrg) : undefined }),
+        body: JSON.stringify({
+          ...normalizeAccess(newUser),
+          organization_id: selectedOrg ? Number(selectedOrg) : undefined,
+        }),
       })
       setNewUser({ username: '', role: 'UNIT_USER', manage_global_admins: false, can_delete_data: false })
       setIssued({ username: res.username, temp_password: res.temp_password })
@@ -768,6 +928,19 @@ export default function Admin() {
     }
   }
 
+  /* حرکت بین تب‌ها با فلش، آن‌طور که از یک نوارِ تب انتظار می‌رود. صفحه
+     RTL است، پس «چپ» یعنی تبِ بعدی. */
+  function moveTab(e: React.KeyboardEvent<HTMLDivElement>) {
+    const step =
+      e.key === 'ArrowLeft' ? 1 : e.key === 'ArrowRight' ? -1 : e.key === 'Home' ? -Infinity : e.key === 'End' ? Infinity : 0
+    if (!step) return
+    e.preventDefault()
+    const at = TABS.findIndex(([key]) => key === tab)
+    const next = Math.max(0, Math.min(TABS.length - 1, step === -Infinity ? 0 : step === Infinity ? TABS.length - 1 : at + step))
+    setTab(TABS[next][0])
+    navRef.current?.querySelector<HTMLButtonElement>(`[data-tab="${TABS[next][0]}"]`)?.focus()
+  }
+
   async function copyText(text: string, label: string) {
     try {
       await navigator.clipboard.writeText(text)
@@ -783,7 +956,12 @@ export default function Admin() {
   const logRows = (logs ?? []).map((l) => {
     const d = (l.details ?? {}) as Record<string, unknown>
     const subject =
-      l.action === 'bulk_delete'
+      // فهرست شناسه‌ی رکورد ندارد؛ «#» بدونِ عدد یعنی چیزی برای نشان‌دادن نبود.
+      READ_SUBJECTS[l.action]
+        ? READ_SUBJECTS[l.action]
+        : l.action === 'SENSITIVE_LIST_VIEW'
+        ? LIST_NOUNS[l.entity] ?? 'فهرست'
+        : l.action === 'bulk_delete'
         ? `${faDigits(Number(d.count ?? 0))} نفر`
         : l.entity === 'employee'
         ? people?.find((p) => p.id === l.entity_id)?.full_name ??
@@ -793,20 +971,36 @@ export default function Admin() {
           : l.entity === 'organization'
             ? String(d.name ?? `واحد #${l.entity_id ?? ''}`)
             : l.entity === 'auth'
-              ? String(d.username ?? 'ورود')
+              // رویدادِ ورود موضوعِ جدا ندارد؛ فاعلش خودِ حساب است. فقط
+              // تلاشِ ناموفق با نامِ دیگر، همان نام را نشان می‌دهد.
+              ? String(d.attempted_username ?? '')
               : l.entity === 'audit'
                 ? 'گزارش فعالیت‌ها'
                 : String(d.file ?? l.entity)
-    return { ...l, ...describeLog(l, subject) }
+    // رکوردی که پاک شده و نامش هم در لاگ نیست، نباید جای خالی بگذارد.
+    const named = subject.trim() || (l.entity === 'auth' ? '' : 'رکورد حذف‌شده')
+    return { ...l, ...describeLog(l, named) }
   })
 
   const q = logQuery.trim().toLowerCase()
-  const visibleLogs = logRows.filter(
-    (l) =>
-      (logFilter === 'all' || l.entity === logFilter) &&
-      (!q ||
-        `${l.actor_name} ${l.subject} ${l.verb} ${l.lines.join(' ')}`.toLowerCase().includes(q)),
-  )
+  const orgName = (id: number | null) =>
+    organizations?.find((org) => org.id === id)?.name ?? ''
+  const visibleLogs = logRows
+    .map((l) => ({ ...l, unit: isGlobal && !selectedOrg ? orgName(l.organization_id) : '' }))
+    .filter((l) => {
+      // «مشاهده‌ها» صافیِ خودش را دارد؛ در بقیه‌ی نماها کنار می‌رود تا
+      // تغییرهای واقعی زیرِ انبوهِ رویدادهای خواندن گم نشوند.
+      const isRead = READ_ACTIONS.has(l.action)
+      const matchesFilter =
+        logFilter === 'reads' ? isRead : !isRead && (logFilter === 'all' || l.entity === logFilter)
+      return (
+        matchesFilter &&
+        (!q ||
+          `${l.actor_name} ${l.subject} ${l.verb} ${l.unit} ${l.lines.join(' ')}`
+            .toLowerCase()
+            .includes(q))
+      )
+    })
 
   const logDays: [string, typeof visibleLogs][] = []
   for (const l of visibleLogs) {
@@ -865,32 +1059,67 @@ export default function Admin() {
           </div>
         </div>
 
-        <div className="mx-auto mt-5 flex w-full max-w-6xl flex-wrap items-center gap-3 px-5 sm:px-8">
-          <div className="rounded-xl border border-sand-200 bg-paper px-3 py-2 text-xs text-ink-600">
-            محدودهٔ فعال: <strong className="text-ink-900">{selectedOrg ? organizations?.find((org) => String(org.id) === selectedOrg)?.name : isGlobal ? 'همهٔ واحدها' : session?.organization_name || 'واحد شما'}</strong>
-            <span className="mx-2 text-ink-300">·</span>{session?.role}
-          </div>
-          {isGlobal && (
-            <label className="flex items-center gap-2 text-xs text-ink-500">
-              انتخاب واحد
-              <select value={selectedOrg} onChange={(event) => { setSelectedOrg(event.target.value); setSelected(new Set()) }} className="rounded-xl border border-sand-300 bg-paper px-3 py-2 text-sm text-ink-900">
-                <option value="">همهٔ واحدها</option>
-                {(organizations ?? []).filter((org) => org.is_active).map((org) => <option key={org.id} value={org.id}>{org.name}</option>)}
-              </select>
-            </label>
+        {/* محدوده‌ی دسترسی، نه یک چیپِ تزئینی: واحدی که می‌بینید، نقشی که
+            دارید، و کارهایی که همان نقش اجازه می‌دهد — در یک سطر، بالای
+            تب‌هایی که محتواشان را همین محدوده تعیین می‌کند. */}
+        <div className="mx-auto mt-5 flex w-full max-w-6xl flex-wrap items-center gap-x-2.5 gap-y-2 px-5 text-[12.5px] sm:px-8">
+          <span className="text-ink-500">محدودهٔ داده</span>
+          {isGlobal ? (
+            <select
+              aria-label="انتخاب واحد سازمانی"
+              value={selectedOrg}
+              onChange={(event) => { setSelectedOrg(event.target.value); setSelected(new Set()) }}
+              className="rounded-lg border border-sand-300 bg-paper px-2.5 py-1 text-[12.5px] font-medium text-ink-900 transition-colors hover:border-sea-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sea-500/30"
+            >
+              <option value="">همهٔ واحدها</option>
+              {(organizations ?? []).filter((org) => org.is_active).map((org) => (
+                <option key={org.id} value={org.id}>{org.name}</option>
+              ))}
+            </select>
+          ) : (
+            <strong className="font-medium text-ink-900">
+              {session?.organization_name || 'واحد شما'}
+            </strong>
+          )}
+
+          <span aria-hidden="true" className="text-sand-300">·</span>
+          <span className="text-ink-500">
+            نقش شما <strong className="font-medium text-ink-900">{roleLabel(session?.role)}</strong>
+          </span>
+
+          {session?.can_delete_data && (
+            <span className="rounded-md bg-tint px-2 py-0.5 text-[11.5px] text-ink-600">
+              {PERMISSION_LABELS.can_delete_data}
+            </span>
+          )}
+          {session?.manage_global_admins && (
+            <span className="rounded-md bg-tint px-2 py-0.5 text-[11.5px] text-ink-600">
+              {PERMISSION_LABELS.manage_global_admins}
+            </span>
           )}
         </div>
 
-        {/* تب‌ها با زیرخط متحرک */}
-        <nav ref={navRef} className="admin-tabs relative mx-auto mt-6 flex w-full max-w-6xl gap-1 px-5 text-[14px] sm:px-8">
+        {/* تب‌ها با زیرخط متحرک. `role="tab"` بدونِ `tablist` والد بی‌معناست،
+            و صفحه‌خوان از یک نوارِ تب انتظارِ کلیدِ جهت‌دار دارد — پس هر دو
+            اینجاست. در RTL جهتِ فلش‌ها آینه می‌شود. */}
+        <div
+          ref={navRef}
+          role="tablist"
+          aria-label="بخش‌های پنل مدیریت"
+          onKeyDown={moveTab}
+          className="admin-tabs relative mx-auto mt-6 flex w-full max-w-6xl gap-1 px-5 text-[14px] sm:px-8"
+        >
           {TABS.map(([key, label]) => (
             <button
               key={key}
+              id={`admin-tab-${key}`}
               data-tab={key}
               onClick={() => setTab(key)}
               aria-selected={tab === key}
+              aria-controls="admin-tabpanel"
               role="tab"
-              className={`px-4 py-2.5 font-medium transition-colors duration-200 ${
+              tabIndex={tab === key ? 0 : -1}
+              className={`rounded-t-lg px-4 py-2.5 font-medium transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sea-500/40 ${
                 tab === key ? 'text-tide' : 'text-ink-500 hover:text-ink-900'
               }`}
             >
@@ -905,11 +1134,16 @@ export default function Admin() {
             className="absolute bottom-0 left-0 h-[2px] rounded-full bg-sea-500 opacity-0 dark:bg-sea-400"
             style={{ width: 0 }}
           />
-        </nav>
+        </div>
       </header>
 
       <main className="relative z-10 mx-auto w-full max-w-6xl px-5 py-7 pb-28 sm:px-8">
-        <div ref={contentRef}>
+        <div
+          ref={contentRef}
+          id="admin-tabpanel"
+          role="tabpanel"
+          aria-labelledby={`admin-tab-${tab}`}
+        >
           {tab === 'people' && (
             <>
               {needsWriteScope && (
@@ -1040,176 +1274,317 @@ export default function Admin() {
           {tab === 'users' && (
             <>
             {needsWriteScope && (
-              <p className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                برای ساخت حساب، واحد مقصد را از بالای صفحه انتخاب کنید.
+              <p className="mb-5 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-400/40 dark:bg-amber-400/10 dark:text-amber-200">
+                در نمای «همهٔ واحدها» حساب ساخته نمی‌شود. واحد مقصد را از بالای صفحه انتخاب کنید.
               </p>
             )}
+
             {/* ساخت حسابِ تازه. رمز نمی‌گیرد — سرور رمزِ موقت می‌سازد و
-                همان یک‌بار نشانش می‌دهد. پیش‌فرض کاربرِ عادی است؛ دسترسیِ
-                مدیریت باید صریح تیک بخورد. */}
-            <form
-              onSubmit={addUser}
-              className="mb-4 flex flex-wrap items-end gap-3 rounded-2xl border border-sand-200 bg-paper p-4"
-            >
-              <div className="min-w-[10rem] flex-1">
-                <label className="mb-1 block text-xs font-medium text-ink-500">نام کاربری</label>
-                <input
-                  dir="ltr"
-                  value={newUser.username}
-                  onChange={(e) => setNewUser({ ...newUser, username: e.target.value })}
-                  className="w-full rounded-xl border border-sand-300 bg-sand-50/60 px-3 py-2 text-left text-sm text-ink-900 transition-colors focus:border-sea-500 focus:bg-paper focus:outline-none focus:ring-2 focus:ring-sea-500/20"
-                />
-              </div>
-              <label className="flex flex-col gap-1 text-xs font-medium text-ink-500">
-                نقش
-                <select
-                  value={newUser.role}
-                  onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}
-                  className="rounded-xl border border-sand-300 bg-paper px-3 py-2 text-sm text-ink-900"
-                >
-                  <option value="UNIT_USER">کاربر واحد</option>
-                  <option value="UNIT_MANAGER">مسئول واحد</option>
-                  {session?.manage_global_admins && <option value="HEAD_OFFICE_ACCESS_ADMIN">مدیر دسترسی دفتر مرکزی</option>}
-                  {session?.manage_global_admins && <option value="GLOBAL_ADMIN">مدیر کل سامانه</option>}
-                </select>
-              </label>
-              <label className="flex cursor-pointer select-none items-center gap-2 py-2.5 text-sm text-ink-700">
-                <input
-                  type="checkbox"
-                  checked={newUser.can_delete_data}
-                  onChange={(e) => setNewUser({ ...newUser, can_delete_data: e.target.checked })}
-                  className="pick"
-                />
-                مجوز حذف داده
-              </label>
-              {session?.manage_global_admins && (
-                <label className="flex cursor-pointer select-none items-center gap-2 py-2.5 text-sm text-ink-700">
-                  <input type="checkbox" checked={newUser.manage_global_admins}
-                    onChange={(e) => setNewUser({ ...newUser, manage_global_admins: e.target.checked })} className="pick" />
-                  manage_global_admins
-                </label>
-              )}
-              <button
-                type="submit"
-                disabled={needsWriteScope}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-sea-500 px-4 py-2.5 text-sm font-medium text-white transition-colors duration-200 hover:bg-sea-600 active:scale-[.98] disabled:cursor-not-allowed disabled:opacity-45 dark:text-deep-950 dark:hover:bg-sea-400"
-              >
-                <UserPlusIcon className="h-4 w-4" />
-                افزودن حساب
-              </button>
-              <p className="w-full text-[11px] text-ink-400">
+                همان یک‌بار نشانش می‌دهد. پیش‌فرض کاربرِ عادی است؛ هر پله‌ی
+                بالاتر باید صریح انتخاب شود. */}
+            <form onSubmit={addUser} className="mb-6 rounded-2xl border border-sand-200 bg-paper p-5 sm:p-6">
+              <h2 className="text-[15px] font-bold text-ink-900">حساب تازه</h2>
+              <p className="mt-1.5 max-w-[60ch] text-[12.5px] leading-relaxed text-ink-500">
                 بدونِ حساب هیچ‌کس دفترچه را نمی‌بیند، پس هر کارمند یکی لازم دارد. رمزِ موقت
                 خودکار ساخته می‌شود و فقط همان لحظه نشان داده می‌شود؛ صاحبش سرِ اولین ورود
                 باید رمز خودش را بگذارد.
               </p>
+
+              <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label htmlFor="new-username" className="mb-1.5 block text-xs font-medium text-ink-500">
+                    نام کاربری
+                  </label>
+                  <input
+                    id="new-username"
+                    dir="ltr"
+                    autoComplete="off"
+                    required
+                    value={newUser.username}
+                    onChange={(e) => setNewUser({ ...newUser, username: e.target.value })}
+                    className="w-full rounded-xl border border-sand-300 bg-sand-50/60 px-3 py-2 text-left text-sm text-ink-900 transition-colors focus:border-sea-500 focus:bg-paper focus:outline-none focus:ring-2 focus:ring-sea-500/20"
+                  />
+                </div>
+
+                <AccessFields
+                  idPrefix="new"
+                  value={newUser}
+                  canGrantElevated={canGrantElevated}
+                  onChange={(next) => setNewUser({ ...next, username: newUser.username })}
+                />
+              </div>
+
+              <div className="mt-5 flex">
+                <button
+                  type="submit"
+                  disabled={needsWriteScope}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-sea-500 px-4 py-2.5 text-sm font-medium text-white transition-colors duration-200 hover:bg-sea-600 active:scale-[.98] disabled:cursor-not-allowed disabled:opacity-45 dark:text-deep-950 dark:hover:bg-sea-400"
+                >
+                  <UserPlusIcon className="h-4 w-4" />
+                  افزودن حساب
+                </button>
+              </div>
             </form>
 
             <div className="overflow-x-auto rounded-2xl border border-sand-200 bg-paper">
-              <table className="w-full min-w-[30rem] text-[14px] tnum">
-                <thead className="bg-sand-100/70 text-ink-500 text-xs">
+              <table className="w-full min-w-[34rem] text-[14px] tnum sm:min-w-[54rem]">
+                <thead className="bg-sand-100/70 text-xs text-ink-500">
                   <tr>
-                    {/* دو ستونِ اول به‌اندازه‌ی محتوا؛ ستونِ دکمه‌ها باقیِ عرض را
-                        می‌گیرد تا با کم‌شدنِ ستون‌ها جدول از هم باز نشود. */}
-                    <th className="whitespace-nowrap text-right px-4 py-3 font-medium">نام کاربری</th>
-                    <th className="whitespace-nowrap text-right px-4 py-3 font-medium">نقش</th>
-                    <th className="whitespace-nowrap text-right px-4 py-3 font-medium">وضعیت</th>
-                    <th className="w-full"></th>
+                    <th className="whitespace-nowrap px-4 py-3 text-right font-medium">نام کاربری</th>
+                    <th className="whitespace-nowrap px-4 py-3 text-right font-medium">واحد</th>
+                    <th className="whitespace-nowrap px-4 py-3 text-right font-medium">سطح دسترسی</th>
+                    <th className="whitespace-nowrap px-4 py-3 text-right font-medium">وضعیت</th>
+                    <th className="w-full">
+                      <span className="sr-only">کارها</span>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {(users ?? []).map((u) => (
-                    <tr
-                      key={u.id}
-                      data-row
-                      className="border-t border-sand-100 hover:bg-tint/50 transition-colors duration-150"
-                    >
-                      <td className="px-4 py-3 text-left text-ink-900" dir="ltr">
-                        <button
-                          type="button"
-                          onClick={() => copyText(u.username, 'نام کاربری')}
-                          title="کپی نام کاربری"
-                          className="rounded px-1 transition-colors hover:bg-tint hover:text-tide"
-                        >
-                          {u.username}
-                        </button>
-                      </td>
+                  {(users ?? []).map((u) => {
+                    /* سرور تغییرِ نقش و غیرفعال‌کردنِ حسابِ خودِ کاربر را رد
+                       می‌کند. رابط هم نباید پیشنهادش بدهد — دکمه‌ای که همیشه
+                       خطا می‌دهد، دکمه نیست. */
+                    const isSelf = u.id === session?.id
+                    return (
+                      <tr
+                        key={u.id}
+                        data-row
+                        className="border-t border-sand-100 transition-colors duration-150 hover:bg-tint/50"
+                      >
+                        <td className="px-4 py-3">
+                          <span className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              dir="ltr"
+                              onClick={() => copyText(u.username, 'نام کاربری')}
+                              title="کپی نام کاربری"
+                              className="rounded px-1 text-ink-900 transition-colors hover:bg-tint hover:text-tide focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sea-500/40"
+                            >
+                              {u.username}
+                            </button>
+                            {isSelf && (
+                              <>
+                                <span className="rounded-md bg-tint px-1.5 py-0.5 text-[11px] text-ink-500">
+                                  شما
+                                </span>
+                                {/* دلیلِ خاموش‌بودنِ دو دکمه‌ی پایین. تولتیپ روی
+                                    لمس و صفحه‌خوان نمی‌رسد؛ این می‌رسد. */}
+                                <span id={`self-${u.id}`} className="sr-only">
+                                  این حساب خودتان است: سطح دسترسی و وضعیت خودتان را نمی‌توانید عوض کنید.
+                                </span>
+                              </>
+                            )}
+                          </span>
+                        </td>
 
-                      <td className="px-4 py-3 text-xs">
-                        <select value={u.role} onChange={(event) => changeRole(u, event.target.value as AdminUser['role'])}
-                          className="rounded-lg border border-sand-200 bg-paper px-2 py-1 text-xs text-ink-900">
-                          <option value="UNIT_USER">کاربر واحد</option>
-                          <option value="UNIT_MANAGER">مسئول واحد</option>
-                          {session?.manage_global_admins && <option value="HEAD_OFFICE_ACCESS_ADMIN">مدیر دسترسی دفتر مرکزی</option>}
-                          {session?.manage_global_admins && <option value="GLOBAL_ADMIN">مدیر کل سامانه</option>}
-                        </select>
-                        {u.role === 'GLOBAL_ADMIN' && <span className="ms-2 text-[10px] text-tide">MFA {u.mfa_enabled ? 'فعال' : 'در انتظار'}</span>}
-                      </td>
+                        <td className="whitespace-nowrap px-4 py-3 text-ink-600">
+                          {u.organization_name || '—'}
+                        </td>
 
-                      <td className="px-4 py-3 text-xs">
-                        {u.is_active ? (
-                          <span className="text-sea-600 font-medium">فعال</span>
-                        ) : (
-                          <span className="text-red-500">غیرفعال</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-left">
-                        <button
-                          onClick={() => openCredentials(u)}
-                          className="text-tide hover:text-ink-900 hover:underline underline-offset-4 text-xs ml-3"
-                        >
-                          تغییر یوزر/رمز
-                        </button>
-                        <button
-                          onClick={() => resetPassword(u)}
-                          className="text-ink-500 hover:text-ink-900 hover:underline underline-offset-4 text-xs ml-3"
-                        >
-                          رمز موقت
-                        </button>
-                        <button
-                          onClick={() => toggleActive(u.id)}
-                          className="text-ink-500 hover:text-ink-900 hover:underline underline-offset-4 text-xs"
-                        >
-                          {u.is_active ? 'غیرفعال' : 'فعال'}‌سازی
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                        <td className="px-4 py-3">
+                          <span className="block text-ink-900 sm:whitespace-nowrap">{roleLabel(u.role)}</span>
+                          <span className="mt-1 flex flex-wrap gap-1.5">
+                            {u.can_delete_data && !deleteIsImplicit(u.role) && (
+                              <span className="rounded-md bg-tint px-1.5 py-0.5 text-[11px] text-ink-500">
+                                {PERMISSION_LABELS.can_delete_data}
+                              </span>
+                            )}
+                            {u.manage_global_admins && (
+                              <span className="rounded-md bg-tint px-1.5 py-0.5 text-[11px] text-ink-500">
+                                {PERMISSION_LABELS.manage_global_admins}
+                              </span>
+                            )}
+                            {u.role === 'GLOBAL_ADMIN' && (
+                              <span
+                                className={`rounded-md px-1.5 py-0.5 text-[11px] ${
+                                  u.mfa_enabled
+                                    ? 'bg-tint text-tide'
+                                    : 'bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-200'
+                                }`}
+                              >
+                                {u.mfa_enabled ? 'ورود دومرحله‌ای فعال' : 'در انتظار ورود دومرحله‌ای'}
+                              </span>
+                            )}
+                          </span>
+                        </td>
+
+                        <td className="whitespace-nowrap px-4 py-3 text-xs">
+                          {u.is_active ? (
+                            <span className="font-medium text-sea-600 dark:text-sea-400">فعال</span>
+                          ) : (
+                            <span className="font-medium text-red-500">غیرفعال</span>
+                          )}
+                        </td>
+
+                        <td className="whitespace-nowrap px-4 py-3 text-left">
+                          <span className="inline-flex items-center gap-3">
+                            <button
+                              onClick={() => openAccess(u)}
+                              disabled={isSelf}
+                              title={isSelf ? 'سطح دسترسی خودتان را نمی‌توانید عوض کنید' : undefined}
+                              aria-describedby={isSelf ? `self-${u.id}` : undefined}
+                              className="rounded text-xs text-tide underline-offset-4 transition-colors hover:text-ink-900 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sea-500/40 disabled:cursor-not-allowed disabled:text-ink-300 disabled:no-underline"
+                            >
+                              سطح دسترسی
+                            </button>
+                            <button
+                              onClick={() => openCredentials(u)}
+                              className="rounded text-xs text-ink-500 underline-offset-4 transition-colors hover:text-ink-900 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sea-500/40"
+                            >
+                              نام کاربری و رمز
+                            </button>
+                            <button
+                              onClick={() => resetPassword(u)}
+                              className="rounded text-xs text-ink-500 underline-offset-4 transition-colors hover:text-ink-900 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sea-500/40"
+                            >
+                              رمز موقت
+                            </button>
+                            <button
+                              onClick={() => toggleActive(u.id)}
+                              disabled={isSelf}
+                              title={isSelf ? 'حساب خودتان را نمی‌توانید غیرفعال کنید' : undefined}
+                              aria-describedby={isSelf ? `self-${u.id}` : undefined}
+                              className="rounded text-xs text-ink-500 underline-offset-4 transition-colors hover:text-ink-900 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sea-500/40 disabled:cursor-not-allowed disabled:text-ink-300 disabled:no-underline"
+                            >
+                              {u.is_active ? 'غیرفعال' : 'فعال'}‌سازی
+                            </button>
+                          </span>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
               {(users ?? []).length === 0 && (
-                <div className="text-center text-ink-400 py-12 text-sm">حسابی ثبت نشده.</div>
+                <div className="px-4 py-12 text-center text-sm text-ink-400">حسابی ثبت نشده.</div>
               )}
             </div>
             </>
           )}
 
           {tab === 'organizations' && (
-            <div className="flex flex-col gap-4">
-              {isGlobal && (
-                <form onSubmit={addOrganization} className="flex flex-wrap items-end gap-3 rounded-2xl border border-sand-200 bg-paper p-4">
-                  <label className="flex min-w-48 flex-1 flex-col gap-1 text-xs font-medium text-ink-500">نام واحد
-                    <input value={newOrg.name} onChange={(e) => setNewOrg({ ...newOrg, name: e.target.value })}
-                      className="rounded-xl border border-sand-300 bg-sand-50 px-3 py-2 text-sm text-ink-900" required />
-                  </label>
-                  <label className="flex flex-col gap-1 text-xs font-medium text-ink-500">کد
-                    <input dir="ltr" value={newOrg.code} onChange={(e) => setNewOrg({ ...newOrg, code: e.target.value })}
-                      className="rounded-xl border border-sand-300 bg-sand-50 px-3 py-2 text-sm text-ink-900" required />
-                  </label>
-                  <label className="flex flex-col gap-1 text-xs font-medium text-ink-500">نوع
-                    <select value={newOrg.kind} onChange={(e) => setNewOrg({ ...newOrg, kind: e.target.value })}
-                      className="rounded-xl border border-sand-300 bg-paper px-3 py-2 text-sm text-ink-900">
-                      <option value="FACTORY">کارخانه</option><option value="HEAD_OFFICE">دفتر مرکزی</option>
-                    </select>
-                  </label>
-                  <button type="submit" className="rounded-xl bg-deep-900 px-4 py-2.5 text-sm font-medium text-white">ایجاد واحد</button>
+            <div className="flex flex-col gap-5">
+              {isGlobal ? (
+                <form
+                  onSubmit={addOrganization}
+                  className="rounded-2xl border border-sand-200 bg-paper p-5 sm:p-6"
+                >
+                  <h2 className="text-[15px] font-bold text-ink-900">واحد تازه</h2>
+                  <p className="mt-1.5 max-w-[60ch] text-[12.5px] leading-relaxed text-ink-500">
+                    هر واحد فضای دادهٔ کاملاً جداگانه دارد: پرسنل، حساب‌ها و گزارش‌هایش را
+                    فقط خودش می‌بیند. کد واحد بعداً عوض نمی‌شود.
+                  </p>
+
+                  <div className="mt-5 grid gap-4 sm:grid-cols-3">
+                    <div>
+                      <label htmlFor="org-name" className="mb-1.5 block text-xs font-medium text-ink-500">
+                        نام واحد
+                      </label>
+                      <input
+                        id="org-name"
+                        required
+                        placeholder="کارخانه تبریز"
+                        value={newOrg.name}
+                        onChange={(e) => setNewOrg({ ...newOrg, name: e.target.value })}
+                        className="w-full rounded-xl border border-sand-300 bg-sand-50/60 px-3 py-2 text-sm text-ink-900 transition-colors placeholder:text-ink-300 focus:border-sea-500 focus:bg-paper focus:outline-none focus:ring-2 focus:ring-sea-500/20"
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="org-code" className="mb-1.5 block text-xs font-medium text-ink-500">
+                        کد
+                      </label>
+                      <input
+                        id="org-code"
+                        dir="ltr"
+                        required
+                        placeholder="TABRIZ"
+                        value={newOrg.code}
+                        onChange={(e) => setNewOrg({ ...newOrg, code: e.target.value })}
+                        className="w-full rounded-xl border border-sand-300 bg-sand-50/60 px-3 py-2 text-left text-sm text-ink-900 transition-colors placeholder:text-ink-300 focus:border-sea-500 focus:bg-paper focus:outline-none focus:ring-2 focus:ring-sea-500/20"
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="org-kind" className="mb-1.5 block text-xs font-medium text-ink-500">
+                        نوع
+                      </label>
+                      <select
+                        id="org-kind"
+                        value={newOrg.kind}
+                        onChange={(e) => setNewOrg({ ...newOrg, kind: e.target.value })}
+                        className="w-full rounded-xl border border-sand-300 bg-paper px-3 py-2 text-sm text-ink-900 transition-colors focus:border-sea-500 focus:outline-none focus:ring-2 focus:ring-sea-500/20"
+                      >
+                        <option value="FACTORY">کارخانه</option>
+                        <option value="HEAD_OFFICE">دفتر مرکزی</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 flex">
+                    <button
+                      type="submit"
+                      className="rounded-xl bg-sea-500 px-4 py-2.5 text-sm font-medium text-white transition-colors duration-200 hover:bg-sea-600 active:scale-[.98] dark:text-deep-950 dark:hover:bg-sea-400"
+                    >
+                      ایجاد واحد
+                    </button>
+                  </div>
                 </form>
+              ) : (
+                /* فهرستِ یک‌ردیفه بدونِ توضیح، آدم را سردرگم می‌گذارد: چرا
+                   دکمه‌ای نیست، و برای ساختنِ «کارخانه تبریز» باید سراغِ که
+                   رفت. مسیر باید نوشته باشد. */
+                <div className="rounded-2xl border border-sand-200 bg-paper p-5 sm:p-6">
+                  <h2 className="text-[15px] font-bold text-ink-900">ساخت واحد تازه</h2>
+                  <p className="mt-1.5 max-w-[62ch] text-[13px] leading-relaxed text-ink-500">
+                    واحد سازمانی را فقط «مدیر کل سامانه» می‌سازد، چون تنها نقشی است که دادهٔ
+                    همهٔ واحدها را می‌بیند. شما {roleLabel(session?.role)} هستید و دادهٔ واحد
+                    خودتان را مدیریت می‌کنید.
+                  </p>
+                  {canGrantElevated ? (
+                    <>
+                      <p className="mt-3 max-w-[62ch] text-[13px] leading-relaxed text-ink-500">
+                        شما اجازهٔ {PERMISSION_LABELS.manage_global_admins} را دارید: در تبِ
+                        «کاربران» یک حساب با نقش «مدیر کل سامانه» بسازید. آن حساب سرِ اولین
+                        ورود، ورود دومرحله‌ای‌اش را فعال می‌کند و از آن پس می‌تواند واحد بسازد.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTab('users')
+                          setNewUser({ username: '', role: 'GLOBAL_ADMIN', manage_global_admins: false, can_delete_data: true })
+                        }}
+                        className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-sea-500 px-4 py-2.5 text-sm font-medium text-white transition-colors duration-200 hover:bg-sea-600 active:scale-[.98] dark:text-deep-950 dark:hover:bg-sea-400"
+                      >
+                        <UserPlusIcon className="h-4 w-4" />
+                        ساخت حساب مدیر کل
+                      </button>
+                    </>
+                  ) : (
+                    <p className="mt-3 max-w-[62ch] text-[13px] leading-relaxed text-ink-500">
+                      برای افزودن واحد، از مسئول دفتر مرکزی بخواهید حساب مدیر کل سامانه بسازد.
+                    </p>
+                  )}
+                </div>
               )}
+
               <div className="overflow-hidden rounded-2xl border border-sand-200 bg-paper">
                 {(organizations ?? []).map((org) => (
-                  <article key={org.id} data-row className="flex items-center gap-4 border-t border-sand-100 px-4 py-4 first:border-0">
-                    <div className="min-w-0 flex-1"><p className="font-medium text-ink-900">{org.name}</p><p dir="ltr" className="mt-1 text-xs text-ink-400">{org.code}</p></div>
-                    <span className="text-xs text-ink-500">{org.kind === 'HEAD_OFFICE' ? 'دفتر مرکزی' : 'کارخانه'}</span>
-                    <span className={org.is_active ? 'text-xs text-sea-600' : 'text-xs text-red-500'}>{org.is_active ? 'فعال' : 'غیرفعال'}</span>
+                  <article
+                    key={org.id}
+                    data-row
+                    className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-sand-100 px-4 py-4 first:border-0"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium text-ink-900">{org.name}</p>
+                      <p dir="ltr" className="mt-1 text-left text-xs text-ink-400">{org.code}</p>
+                    </div>
+                    <span className="text-xs text-ink-500">{organizationKindLabel(org.kind)}</span>
+                    <span
+                      className={`text-xs font-medium ${
+                        org.is_active ? 'text-sea-600 dark:text-sea-400' : 'text-red-500'
+                      }`}
+                    >
+                      {org.is_active ? 'فعال' : 'غیرفعال'}
+                    </span>
                   </article>
                 ))}
               </div>
@@ -1269,8 +1644,18 @@ export default function Admin() {
                         <div className="min-w-0 flex-1">
                           <p className="text-ink-500">
                             <span className="font-medium text-ink-900">{l.actor_name}</span>{' '}
-                            {l.verb}{' '}
-                            <span className="font-medium text-ink-900">{l.subject}</span>
+                            {l.verb}
+                            {l.subject && (
+                              <>
+                                {' '}
+                                <span className="font-medium text-ink-900">{l.subject}</span>
+                              </>
+                            )}
+                            {/* مدیر کل که همه‌ی واحدها را یک‌جا می‌بیند، بدون این
+                                نمی‌داند رویداد در کدام واحد افتاده. */}
+                            {l.unit && (
+                              <span className="text-ink-400"> · {l.unit}</span>
+                            )}
                           </p>
 
                           {/* ریزِ آنچه عوض شده — همان چیزی که دفتر برایش هست */}
@@ -1500,6 +1885,88 @@ export default function Admin() {
       )}
 
       {/* ست‌کردن دستی نام کاربری و رمز */}
+      {/* سطحِ دسترسی — کارِ برگشت‌پذیر ولی حساس: نقش و مجوزها با هم دیده
+          و یک‌بار ثبت می‌شوند، و بالا رفتن به نقشِ دفتر مرکزی جمله‌ی
+          صریحِ خودش را دارد. */}
+      {accessEditing && accessDraft && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`سطح دسترسی ${accessEditing.username}`}
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !accessBusy) { setAccessEditing(null); setAccessDraft(null) }
+          }}
+          className="fixed inset-0 z-50 flex items-end justify-center bg-deep-950/45 p-0 backdrop-blur-sm sm:items-center sm:p-6"
+        >
+          <form
+            onSubmit={saveAccess}
+            className="max-h-[88dvh] w-full max-w-md overflow-y-auto rounded-t-2xl border border-sand-200 bg-paper p-6 shadow-panel sm:rounded-2xl"
+          >
+            <div className="mb-1 flex items-start justify-between gap-3">
+              <h2 className="text-lg font-bold text-ink-900">سطح دسترسی</h2>
+              <button
+                type="button"
+                onClick={() => { setAccessEditing(null); setAccessDraft(null) }}
+                aria-label="بستن"
+                className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-ink-400 transition-colors duration-200 hover:bg-sand-100 hover:text-ink-700"
+              >
+                <CloseIcon className="h-4 w-4" />
+              </button>
+            </div>
+
+            <p className="mb-5 text-sm text-ink-500">
+              <span dir="ltr" className="font-medium text-ink-900">{accessEditing.username}</span>
+              <span className="mx-1.5 text-sand-300">·</span>
+              {accessEditing.organization_name || 'بدون واحد'}
+            </p>
+
+            <div className="grid gap-4">
+              <AccessFields
+                idPrefix="access"
+                value={accessDraft}
+                canGrantElevated={canGrantElevated}
+                onChange={setAccessDraft}
+              />
+            </div>
+
+            {/* بالاترین سطحِ سامانه با یک انتخاب در فهرست داده نمی‌شود:
+                اینجا نوشته می‌شود دقیقاً چه چیزی به چه کسی می‌رسد. */}
+            {isElevated(accessDraft.role) && accessDraft.role !== accessEditing.role && (
+              <p className="mt-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-[12.5px] leading-relaxed text-amber-900 dark:border-amber-400/40 dark:bg-amber-400/10 dark:text-amber-200">
+                با ثبت این تغییر، <span dir="ltr" className="font-medium">{accessEditing.username}</span> نقش
+                «{ROLE_LABELS[accessDraft.role]}» می‌گیرد
+                {accessDraft.role === 'GLOBAL_ADMIN'
+                  ? ' و دادهٔ همهٔ واحدها را می‌بیند. تا وقتی ورود دومرحله‌ای را فعال نکند، نمی‌تواند وارد شود.'
+                  : ' و می‌تواند در دفتر مرکزی حساب بسازد.'}
+                {accessDraft.manage_global_admins && ' همچنین می‌تواند نقش مدیر کل را به دیگران بدهد یا از آن‌ها بگیرد.'}
+              </p>
+            )}
+
+            <p className="mt-4 text-[11.5px] text-ink-400">
+              نشستِ فعلیِ این حساب بسته می‌شود و باید دوباره وارد شود. کار در تبِ «تغییرات» ثبت می‌ماند.
+            </p>
+
+            <div className="mt-5 flex gap-3">
+              <button
+                type="submit"
+                disabled={accessBusy}
+                className="flex-1 rounded-xl bg-sea-500 py-3 font-medium text-white transition-colors duration-200 hover:bg-sea-600 active:scale-[.98] disabled:opacity-60 dark:text-deep-950 dark:hover:bg-sea-400"
+              >
+                {accessBusy ? 'در حال ثبت…' : 'ثبت سطح دسترسی'}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setAccessEditing(null); setAccessDraft(null) }}
+                disabled={accessBusy}
+                className="rounded-xl bg-sand-100 px-6 text-ink-700 transition-colors hover:bg-sand-200 disabled:opacity-60"
+              >
+                انصراف
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {credEditing && (
         <div
           role="dialog"
@@ -1546,7 +2013,7 @@ export default function Admin() {
                 className="w-full rounded-xl border border-sand-300 bg-sand-50/60 px-3 py-2 text-left text-sm text-ink-900 transition-colors placeholder:text-ink-300 focus:border-sea-500 focus:bg-paper focus:outline-none focus:ring-2 focus:ring-sea-500/20"
               />
               <p className="mt-1 text-[11px] text-ink-400">
-                دست‌کم ۶ نویسه. بعد از ذخیره، رمز فقط هش می‌شود و دیگر از پنل خوانده نمی‌شود —
+                دست‌کم ۱۰ نویسه. بعد از ذخیره، رمز فقط هش می‌شود و دیگر از پنل خوانده نمی‌شود —
                 همین‌جا یادداشتش کنید.
               </p>
             </div>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, clearToken, getToken } from './api'
+import type { Role } from './roles'
 
 /* نشستِ کاربر — یک منبعِ حقیقت برای «این نفر کیست و چه اجازه‌ای دارد».
    قاعده‌ی این فایل: localStorage فقط برای «سریع نشان دادن» است، هرگز
@@ -15,7 +16,7 @@ export interface Session {
   is_admin: boolean
   organization_id: number
   organization_name: string
-  role: 'UNIT_USER' | 'UNIT_MANAGER' | 'HEAD_OFFICE_ACCESS_ADMIN' | 'GLOBAL_ADMIN'
+  role: Role
   manage_global_admins: boolean
   can_delete_data: boolean
   mfa_enabled: boolean
