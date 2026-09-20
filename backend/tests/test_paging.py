@@ -84,3 +84,32 @@ def test_search_pages_are_disjoint():
     assert len(first) == 10
     assert len(second) == 10
     assert not set(first) & set(second)
+
+
+def _total(**params) -> int:
+    res = client.get("/api/employees/count", params=params, headers=_auth())
+    assert res.status_code == 200, res.text
+    return res.json()["total"]
+
+
+def test_browse_count_is_the_whole_table_not_the_first_page():
+    """«۶۰ همکار در فهرست» که با اسکرول ۱۳۶ می‌شد: شمار به صفحه‌ی لودشده بند نیست."""
+    total = _seed()
+    assert _total() == total
+    # همان عدد، مستقل از اینکه کاربر تا کجا پایین آمده باشد
+    assert len(_ids(limit=30)) == 30
+    assert _total() == total
+
+
+def test_search_count_matches_what_paging_delivers():
+    _seed()
+    total = _total(q="شبکه")
+    seen: list[int] = []
+    offset = 0
+    while True:
+        page = _ids(q="شبکه", limit=30, offset=offset)
+        if not page:
+            break
+        seen += page
+        offset += 30
+    assert total == len(seen)

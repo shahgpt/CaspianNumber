@@ -2,6 +2,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -58,6 +59,31 @@ def list_employees(
                 details={"query": q[:100], "offset": offset, "count": len(rows), "all_units": scope is None})
     db.commit()
     return rows
+
+
+@router.get("/count")
+def count_employees(
+    q: str = "",
+    organization_id: int | None = None,
+    user=Depends(require_password_changed),
+    db: Session = Depends(get_db),
+):
+    """شمارِ کلِ نتایج — نه آنچه تا این لحظه صفحه‌به‌صفحه پایین آمده است.
+
+    فهرست با اسکرول بی‌نهایت بالا می‌آید، پس تعدادِ ردیف‌های روی صفحه
+    شمارِ دفترچه نیست. عدد را همان‌جایی می‌گیریم که برش می‌خورد.
+    """
+    from ..search import count_employee_matches
+
+    scope = resolve_scope_organization(user, organization_id, db)
+    if q.strip():
+        total = count_employee_matches(db, q, organization_id=scope)
+    else:
+        query = db.query(func.count(Employee.id))
+        if scope is not None:
+            query = query.filter(Employee.organization_id == scope)
+        total = int(query.scalar() or 0)
+    return {"total": total}
 
 
 @router.get("/{emp_id}/vcard")

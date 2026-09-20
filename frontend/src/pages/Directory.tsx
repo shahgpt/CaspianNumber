@@ -55,6 +55,20 @@ export default function Directory() {
 
   const results = data?.pages.flat()
 
+  /* شمارنده از خودِ سرور می‌آید، نه از ردیف‌هایی که تا این لحظه پایین
+     آمده‌اند: فهرست صفحه‌صفحه لود می‌شود و «۶۰ همکار در فهرست» با اسکرول
+     ۱۳۶ می‌شد. عدد باید از اول همان باشد که هست. */
+  const { data: totals, isError: countFailed } = useQuery({
+    queryKey: ['employees-count', query, selectedOrg],
+    queryFn: () =>
+      api<{ total: number }>(
+        `/api/employees/count?q=${encodeURIComponent(query)}${selectedOrg ? `&organization_id=${selectedOrg}` : ''}`,
+      ),
+  })
+  /* اگر شمارش از کار افتاد، همان ردیف‌های روی صفحه بهتر از جای خالی است —
+     اما نه در حینِ انتظار، وگرنه عدد دوبار بالا می‌رود */
+  const total = totals?.total ?? (countFailed ? results?.length : undefined)
+
   const pageRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<HTMLDivElement>(null)
   const mastheadRef = useRef<HTMLDivElement>(null)
@@ -192,11 +206,11 @@ export default function Directory() {
 
   /* --- شمارنده‌ی نتایج --- */
   useEffect(() => {
-    const n = results?.length ?? -1
+    const n = total ?? -1
     if (n < 0 || !countRef.current || n === lastCount.current) return
     countTo(countRef.current, n)
     lastCount.current = n
-  }, [results])
+  }, [total])
 
   /* --- حالت خالی --- */
   useEffect(() => {
@@ -564,7 +578,7 @@ export default function Directory() {
             className="mt-7 mb-1.5 flex items-baseline gap-1.5 ps-8 text-[12px] text-ink-400"
           >
             <span ref={countRef} className="tnum font-bold text-tide">
-              {faDigits(rows.length)}
+              {faDigits(total ?? 0)}
             </span>
             <span>{browsing ? 'همکار در فهرست' : 'نتیجه برای جستجوی شما'}</span>
           </p>

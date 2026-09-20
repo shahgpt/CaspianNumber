@@ -101,10 +101,10 @@ def _score(employee: Employee, terms: list[str], raw_query: str) -> int:
     return score
 
 
-def search_employees(
-    db: Session, query: str, limit: int = 30, offset: int = 0,
-    organization_id: int | None = None,
-):
+def search_employee_matches(
+    db: Session, query: str, organization_id: int | None = None,
+) -> list[Employee]:
+    """فهرستِ کاملِ رتبه‌بندی‌شده — صفحه‌بندی و شمارش هر دو از همین یکی برش می‌خورند."""
     q = (query or "").strip()
     if not q:
         return []
@@ -147,5 +147,19 @@ def search_employees(
     # ponytail: صفحه‌بندی روی همان ۳۰۰ کاندیدای پیش‌فیلترشده است — عمقِ
     # بیشتر لازم شد، برش را به خودِ کوئری ببر
     if not scored and digits and len(digits) >= 3:
-        return candidates[offset : offset + limit]
-    return [emp for emp, _ in scored[offset : offset + limit]]
+        return candidates
+    return [emp for emp, _ in scored]
+
+
+def search_employees(
+    db: Session, query: str, limit: int = 30, offset: int = 0,
+    organization_id: int | None = None,
+):
+    matches = search_employee_matches(db, query, organization_id=organization_id)
+    return matches[offset : offset + limit]
+
+
+def count_employee_matches(
+    db: Session, query: str, organization_id: int | None = None,
+) -> int:
+    return len(search_employee_matches(db, query, organization_id=organization_id))
