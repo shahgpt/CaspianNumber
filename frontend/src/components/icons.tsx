@@ -103,6 +103,14 @@ export const BookIcon = (p: P) => (
   </Svg>
 )
 
+/* نمای کلی — دو محور و یک خطِ بالارونده، به زبانِ همان خطوطِ ترازِ نقشه */
+export const ChartIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M4.5 4.5v13a2 2 0 0 0 2 2h13" />
+    <path d="m8 15 3.2-3.8 2.6 2.2L18.5 8" />
+  </Svg>
+)
+
 export const ShieldIcon = (p: P) => (
   <Svg {...p}>
     <path d="M12 3.5 5 6v6c0 4.4 3 7.6 7 8.5 4-.9 7-4.1 7-8.5V6l-7-2.5Z" />

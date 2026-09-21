@@ -10,6 +10,9 @@ import { useDialog } from '../lib/dialog'
 import BrandLockup from '../components/BrandLockup'
 import ThemeToggle from '../components/ThemeToggle'
 import Select from '../components/ui/select'
+import { SortableHead, TableSearch } from '../components/ui/table-controls'
+import { matches, nextSort, sortRows } from '../lib/table'
+import type { Sort } from '../lib/table'
 import type { Employee } from '../lib/api'
 import { createRevealer, faDigits, shouldAnimate } from '../lib/motion'
 import type { Revealer } from '../lib/motion'
@@ -17,6 +20,7 @@ import {
   PERMISSION_LABELS,
   ROLE_LABELS,
   ROLE_NOTES,
+  ROLE_ORDER,
   assignableRoles,
   deleteIsImplicit,
   isElevated,
@@ -28,6 +32,7 @@ import type { Role } from '../lib/roles'
 import { CONTOURS } from './login-contours'
 import {
   BookIcon,
+  ChartIcon,
   UploadIcon,
   UserPlusIcon,
   CloseIcon,
@@ -41,6 +46,25 @@ const EMPTY: Partial<Employee> = {
   first_name: '', last_name: '', latin_name: '', direct_number: '', extension: '',
   phone: '', email: '', department: '', company: '', job_title: '',
   location: '', keywords: '', skills: '', languages: '', working_hours: '', notes: '',
+}
+
+/* آنچه سرور در بدنه‌ی نوشتن می‌پذیرد — نه یک کپیِ آزادِ رکوردِ خوانده‌شده.
+   قرارداد پرسنل `extra="forbid"` است و این عمدی است: شناسه‌ی واحد در بدنه
+   یعنی تلاش برای نوشتن در واحدِ دیگری، و باید رد شود. اما فرمِ ویرایش
+   همان رکوردِ کامل را پس می‌فرستاد — با `id`، `organization_id`،
+   `full_name` و `direct` — پس هر ذخیره‌ای ۴۲۲ می‌گرفت و «هیچ‌چیز ذخیره
+   نمی‌شد». بدنه از همین فهرست ساخته می‌شود، نه از هرچه در فرم بود. */
+const WRITABLE: (keyof Employee)[] = [
+  'first_name', 'last_name', 'latin_name', 'direct_number', 'extension',
+  'phone', 'email', 'department', 'company', 'job_title', 'location',
+  'photo_url', 'keywords', 'skills', 'languages', 'working_hours', 'notes',
+]
+
+/** بدنه‌ی نوشتن: همان فیلدهای مجاز، همیشه رشته، هیچ‌چیز اضافه. */
+function writableEmployee(draft: Partial<Employee>): Record<string, string> {
+  return Object.fromEntries(
+    WRITABLE.map((key) => [key, String(draft[key] ?? '')]),
+  )
 }
 
 type Field = {
@@ -90,6 +114,41 @@ const TABS = [
   ['organizations', 'واحدها'],
   ['logs', 'تغییرات'],
 ] as const
+
+/* --- ترتیب و صافیِ جدول‌ها --------------------------------------------
+   هر ستونی که سرستونش مرتب می‌شود، اینجا می‌گوید مقدارِ مرتب‌سازی‌اش چیست.
+   «نام» بر اساس نام خانوادگی مرتب می‌شود — همان ترتیبی که سرور فهرست را
+   با آن می‌فرستد و چشم در یک دفترچه انتظارش را دارد. */
+
+type PeopleKey = 'name' | 'department' | 'job_title' | 'extension' | 'direct'
+
+const PEOPLE_SORT: Record<PeopleKey, (p: Employee) => unknown> = {
+  name: (p) => `${p.last_name ?? ''} ${p.first_name ?? ''}`.trim(),
+  department: (p) => p.department,
+  job_title: (p) => p.job_title,
+  extension: (p) => p.extension,
+  direct: (p) => p.direct || p.direct_number,
+}
+
+/* جستجو روی هرچه در پرونده نوشته شده، نه فقط ستون‌های روی جدول: کسی که
+   «۰۲۱۴۴۲۱۸» یا یک ایمیل را می‌چسباند باید نفرش را پیدا کند. */
+const peopleHaystack = (p: Employee): string[] => [
+  p.full_name, p.first_name, p.last_name, p.latin_name, p.department, p.job_title,
+  p.company, p.extension, p.direct, p.direct_number, p.phone, p.email,
+  p.location, p.keywords, p.skills, p.languages,
+]
+
+type UserKey = 'username' | 'organization' | 'role' | 'status'
+
+const USER_SORT: Record<UserKey, (u: AdminUser) => unknown> = {
+  username: (u) => u.username,
+  organization: (u) => u.organization_name,
+  // نه الفبایی: نردبانِ دسترسی ترتیبِ معنادارِ خودش را دارد.
+  role: (u) => ROLE_ORDER.indexOf(u.role),
+  status: (u) => u.is_active,
+}
+
+type OrgKey = 'name' | 'code' | 'kind' | 'status'
 
 /* --- دفترِ تغییرات ---------------------------------------------------
    لاگ خام فنی و انگلیسی است («toggle_admin روی user»). اینجا به جمله‌ی
@@ -299,7 +358,20 @@ type AccessDraft = {
   can_delete_data: boolean
 }
 
-type Organization = { id: number; name: string; code: string; kind: 'HEAD_OFFICE' | 'FACTORY'; is_active: boolean }
+/* نوعِ واحد یک رشته‌ی آزاد است، نه اتحادِ دو مقدار: فهرستِ نوع‌ها را ادمین
+   می‌سازد و سرور نگهش می‌دارد. دو کدِ پایه هنوز معنای ویژه دارند، ولی
+   دیگر تنها مقدارهای ممکن نیستند. */
+type Organization = { id: number; name: string; code: string; kind: string; is_active: boolean }
+
+type OrganizationKind = {
+  id: number
+  code: string
+  name: string
+  is_system: boolean
+  sort_order: number
+  /** چند واحد این نوع را دارند — نوعِ در استفاده حذف نمی‌شود */
+  usage_count: number
+}
 
 /* نقش و مجوزها یک‌جا انتخاب می‌شوند — هم موقعِ ساختِ حساب، هم موقعِ
    تغییرِ دسترسیِ حسابِ موجود. یک واژگان، یک پیاده‌سازی. */
@@ -422,6 +494,26 @@ export default function Admin() {
   const [logFilter, setLogFilter] = useState<(typeof LOG_FILTERS)[number][0]>('all')
   const [logQuery, setLogQuery] = useState('')
 
+  /* صافی و ترتیبِ هر جدول جداست: کسی که در پرسنل دنبالِ «مالی» می‌گردد و
+     بعد به تبِ کاربران می‌رود، نباید فهرستِ حساب‌ها را هم صاف‌شده ببیند. */
+  const [peopleQuery, setPeopleQuery] = useState('')
+  const [peopleSort, setPeopleSort] = useState<Sort<PeopleKey>>({ key: 'name', dir: 'asc' })
+  const [userQuery, setUserQuery] = useState('')
+  const [userSort, setUserSort] = useState<Sort<UserKey>>({ key: 'username', dir: 'asc' })
+  const [orgQuery, setOrgQuery] = useState('')
+  const [orgSort, setOrgSort] = useState<Sort<OrgKey>>({ key: 'name', dir: 'asc' })
+
+  /* واحدها و نوع‌هایشان */
+  const [orgEditing, setOrgEditing] = useState<Organization | null>(null)
+  const [orgDraft, setOrgDraft] = useState({ name: '', code: '', kind: '', is_active: true })
+  const [orgBusy, setOrgBusy] = useState(false)
+  const [orgDeleting, setOrgDeleting] = useState<Organization | null>(null)
+  const [orgDeleteBusy, setOrgDeleteBusy] = useState(false)
+  const [kindsOpen, setKindsOpen] = useState(false)
+  const [newKind, setNewKind] = useState({ name: '', code: '' })
+  const [kindDraft, setKindDraft] = useState<{ id: number; name: string } | null>(null)
+  const [kindBusy, setKindBusy] = useState(false)
+
   /* پیش‌شماره از سرور می‌آید تا در دو جا دوباره نوشته نشود */
   const { data: health } = useQuery({
     queryKey: ['health'],
@@ -440,6 +532,15 @@ export default function Admin() {
     queryKey: ['organizations'],
     queryFn: () => api<Organization[]>('/api/admin/organizations'),
   })
+  /* نوعِ واحد دیگر یک فهرستِ ثابت در کد نیست؛ از سرور می‌آید تا هرجا نامِ
+     نوع نشان داده می‌شود همان چیزی باشد که ادمین نوشته است. */
+  const { data: kinds } = useQuery({
+    queryKey: ['organization-kinds'],
+    queryFn: () => api<OrganizationKind[]>('/api/admin/organization-kinds'),
+  })
+  const kindName = (code: string) =>
+    kinds?.find((k) => k.code === code)?.name ?? organizationKindLabel(code)
+  const kindOptions = (kinds ?? []).map((k) => ({ value: k.code, label: k.name }))
 
   useEffect(() => {
     if (pinnedOwnOrg.current || !isGlobal || !session?.organization_id) return
@@ -500,6 +601,13 @@ export default function Admin() {
   })
   const credDialogRef = useDialog<HTMLDivElement>(credEditing !== null, () => setCredEditing(null))
   const deleteDialogRef = useDialog<HTMLDivElement>(deleting !== null, () => !deleteBusy && setDeleting(null))
+  const orgDialogRef = useDialog<HTMLDivElement>(orgEditing !== null, () => !orgBusy && setOrgEditing(null))
+  const orgDeleteDialogRef = useDialog<HTMLDivElement>(orgDeleting !== null, () => !orgDeleteBusy && setOrgDeleting(null))
+  const kindsDialogRef = useDialog<HTMLDivElement>(kindsOpen, () => {
+    if (kindBusy) return
+    setKindsOpen(false)
+    setKindDraft(null)
+  })
   const editDialogRef = useDialog<HTMLDivElement>(editing !== null, () => setEditing(null))
 
   // زیرخطِ متحرک تب‌ها — با هر تغییر تب سر جایش می‌لغزد،
@@ -659,16 +767,17 @@ export default function Admin() {
       flashNotice('برای افزودن نفر، ابتدا واحد مقصد را انتخاب کنید', 4000)
       return
     }
+    const body = JSON.stringify(writableEmployee(editing))
     try {
       if (editing.id) {
         await api(selectedOrg ? scopeJoin(`/api/admin/employees/${editing.id}`) : `/api/admin/employees/${editing.id}`, {
           method: 'PATCH',
-          body: JSON.stringify(editing),
+          body,
         })
       } else {
         await api(selectedOrg ? scopeJoin('/api/admin/employees') : '/api/admin/employees', {
           method: 'POST',
-          body: JSON.stringify(editing),
+          body,
         })
       }
       setEditing(null)
@@ -731,9 +840,11 @@ export default function Admin() {
     setSuggesting(true)
     setAiError('')
     try {
+      // همان قاعده‌ی ذخیره: بدنه فقط فیلدهای مجاز را دارد، وگرنه تکمیل روی
+      // یک رکوردِ موجود هم ۴۲۲ می‌گرفت.
       const out = await api<Pick<Employee, 'keywords' | 'skills' | 'languages' | 'notes'>>(
         '/api/admin/employees/suggest',
-        { method: 'POST', body: JSON.stringify(editing) },
+        { method: 'POST', body: JSON.stringify(writableEmployee(editing)) },
       )
       setEditing((cur) => (cur ? { ...cur, ...out } : cur))
     } catch (err) {
@@ -752,9 +863,48 @@ export default function Admin() {
   /* --- انتخابِ گروهی -------------------------------------------------
      مرجعِ حقیقت همین تلاقی است: هر جا شمار یا شناسه‌ها لازم شود از
      `chosen` می‌آید، نه از خودِ `selected`. */
-  const rows = people ?? []
+  /* صافی و ترتیب روی همین فهرستِ کامل انجام می‌شود، و `rows` از اینجا به
+     بعد یعنی «آنچه روی صفحه است». انتخابِ گروهی هم از همین می‌آید، پس
+     «انتخاب همه» یعنی همه‌ی ردیف‌های دیده‌شده — نه ردیف‌هایی که صافی
+     کنارشان گذاشته و کسی نمی‌بیندشان. */
+  const allPeople = people ?? []
+  const rows = sortRows(
+    allPeople.filter((p) => matches(peopleHaystack(p), peopleQuery)),
+    PEOPLE_SORT[peopleSort.key],
+    peopleSort.dir,
+  )
   const chosen = rows.filter((p) => selected.has(p.id))
   const allChosen = rows.length > 0 && chosen.length === rows.length
+
+  const allUsers = users ?? []
+  const userRows = sortRows(
+    allUsers.filter((u) =>
+      matches([u.username, u.organization_name, roleLabel(u.role), u.is_active ? 'فعال' : 'غیرفعال'], userQuery),
+    ),
+    USER_SORT[userSort.key],
+    userSort.dir,
+  )
+
+  const allOrgs = organizations ?? []
+  const ORG_SORT: Record<OrgKey, (o: Organization) => unknown> = {
+    name: (o) => o.name,
+    code: (o) => o.code,
+    kind: (o) => kindName(o.kind),
+    status: (o) => o.is_active,
+  }
+  const orgRows = sortRows(
+    allOrgs.filter((o) => matches([o.name, o.code, kindName(o.kind)], orgQuery)),
+    ORG_SORT[orgSort.key],
+    orgSort.dir,
+  )
+
+  /** «۱۲ از ۸۰» — فقط وقتی صافی واقعاً چیزی را کنار گذاشته باشد */
+  const filteredCount = (shown: number, total: number) =>
+    shown === total ? `${faDigits(total)} ردیف` : `${faDigits(shown)} از ${faDigits(total)}`
+
+  const sortPeople = (key: PeopleKey) => setPeopleSort((cur) => nextSort(cur, key))
+  const sortUsers = (key: UserKey) => setUserSort((cur) => nextSort(cur, key))
+  const sortOrgs = (key: OrgKey) => setOrgSort((cur) => nextSort(cur, key))
 
   function toggleRow(id: number) {
     setSelected((cur) => {
@@ -958,13 +1108,118 @@ export default function Admin() {
     e.preventDefault()
     try {
       await api('/api/admin/organizations', { method: 'POST', body: JSON.stringify(newOrg) })
-      setNewOrg({ name: '', code: '', kind: 'FACTORY' })
-      qc.invalidateQueries({ queryKey: ['organizations'] })
+      setNewOrg({ name: '', code: '', kind: newOrg.kind })
+      refreshOrganizations()
       flashNotice('واحد سازمانی ساخته شد')
     } catch (err) {
       flashNotice(err instanceof Error ? err.message : 'ساخت واحد انجام نشد', 4000)
     }
   }
+
+  /* شمارِ استفاده‌ی هر نوع روی همان فهرستِ نوع‌ها می‌نشیند، پس هر تغییرِ
+     واحد هم باید نوع‌ها را تازه کند — وگرنه نوعی که تازه آزاد شده هنوز
+     «در استفاده» نشان داده می‌شود و دکمه‌ی حذفش خاموش می‌ماند. */
+  function refreshOrganizations() {
+    qc.invalidateQueries({ queryKey: ['organizations'] })
+    qc.invalidateQueries({ queryKey: ['organization-kinds'] })
+  }
+
+  function openOrg(org: Organization) {
+    setOrgEditing(org)
+    setOrgDraft({ name: org.name, code: org.code, kind: org.kind, is_active: org.is_active })
+  }
+
+  async function saveOrg(e: React.FormEvent) {
+    e.preventDefault()
+    if (!orgEditing) return
+    setOrgBusy(true)
+    try {
+      await api(`/api/admin/organizations/${orgEditing.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          name: orgDraft.name.trim(),
+          code: orgDraft.code.trim(),
+          kind: orgDraft.kind,
+          is_active: orgDraft.is_active,
+        }),
+      })
+      setOrgEditing(null)
+      refreshOrganizations()
+      flashNotice('واحد ذخیره شد')
+    } catch (err) {
+      flashNotice(err instanceof Error ? err.message : 'ذخیرهٔ واحد انجام نشد', 4000)
+    } finally {
+      setOrgBusy(false)
+    }
+  }
+
+  async function removeOrg() {
+    if (!orgDeleting) return
+    setOrgDeleteBusy(true)
+    try {
+      await api(`/api/admin/organizations/${orgDeleting.id}`, { method: 'DELETE' })
+      // محدوده‌ی داده ممکن است همین واحد بوده باشد؛ بعد از حذفش هر درخواستی
+      // با آن شناسه ۴۰۴ می‌گیرد، پس به واحد خودِ کاربر برمی‌گردیم.
+      if (selectedOrg === String(orgDeleting.id)) setSelectedOrg(String(session?.organization_id ?? ''))
+      flashNotice(`واحد «${orgDeleting.name}» حذف شد`)
+      setOrgDeleting(null)
+      refreshOrganizations()
+    } catch (err) {
+      flashNotice(err instanceof Error ? err.message : 'حذف واحد انجام نشد', 5000)
+    } finally {
+      setOrgDeleteBusy(false)
+    }
+  }
+
+  async function addKind(e: React.FormEvent) {
+    e.preventDefault()
+    setKindBusy(true)
+    try {
+      await api('/api/admin/organization-kinds', {
+        method: 'POST',
+        body: JSON.stringify({ name: newKind.name.trim(), code: newKind.code.trim() }),
+      })
+      setNewKind({ name: '', code: '' })
+      qc.invalidateQueries({ queryKey: ['organization-kinds'] })
+      flashNotice('نوع تازه ساخته شد')
+    } catch (err) {
+      flashNotice(err instanceof Error ? err.message : 'ساخت نوع انجام نشد', 4000)
+    } finally {
+      setKindBusy(false)
+    }
+  }
+
+  async function renameKind(e: React.FormEvent) {
+    e.preventDefault()
+    if (!kindDraft) return
+    setKindBusy(true)
+    try {
+      await api(`/api/admin/organization-kinds/${kindDraft.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name: kindDraft.name.trim() }),
+      })
+      setKindDraft(null)
+      qc.invalidateQueries({ queryKey: ['organization-kinds'] })
+      flashNotice('نام نوع ذخیره شد')
+    } catch (err) {
+      flashNotice(err instanceof Error ? err.message : 'تغییر نام انجام نشد', 4000)
+    } finally {
+      setKindBusy(false)
+    }
+  }
+
+  async function removeKind(kind: OrganizationKind) {
+    // نوعِ بی‌استفاده است — همان قاعده‌ی «حذفِ یک نفر»: یک پرسش، نه یک برگه.
+    if (!confirm(`نوع «${kind.name}» حذف شود؟`)) return
+    try {
+      await api(`/api/admin/organization-kinds/${kind.id}`, { method: 'DELETE' })
+      qc.invalidateQueries({ queryKey: ['organization-kinds'] })
+      flashNotice(`نوع «${kind.name}» حذف شد`)
+    } catch (err) {
+      flashNotice(err instanceof Error ? err.message : 'حذف نوع انجام نشد', 5000)
+    }
+  }
+
 
   /* حرکت بین تب‌ها با فلش، آن‌طور که از یک نوارِ تب انتظار می‌رود. صفحه
      RTL است، پس «چپ» یعنی تبِ بعدی. */
@@ -1079,6 +1334,10 @@ export default function Admin() {
             <Link to="/" className="masthead-action">
               <BookIcon className="h-[17px] w-[17px]" />
               <span>دفترچه</span>
+            </Link>
+            <Link to="/insights" className="masthead-action">
+              <ChartIcon className="h-[17px] w-[17px]" />
+              <span>نمای کلی</span>
             </Link>
             <div className="ms-auto flex items-center gap-1.5">
               <button
@@ -1231,6 +1490,15 @@ export default function Admin() {
                     className="hidden"
                   />
                 </label>
+
+                <TableSearch
+                  className="ms-auto"
+                  label="جستجو در پرسنل"
+                  placeholder="نام، داخلی، سمت، ایمیل…"
+                  value={peopleQuery}
+                  onChange={setPeopleQuery}
+                  count={filteredCount(rows.length, allPeople.length)}
+                />
               </div>
 
               {/* list */}
@@ -1253,11 +1521,11 @@ export default function Admin() {
                           className="pick"
                         />
                       </th>
-                      <th className="text-right px-4 py-3 font-medium">نام</th>
-                      <th className="text-right px-4 py-3 font-medium">واحد</th>
-                      <th className="text-right px-4 py-3 font-medium">سمت</th>
-                      <th className="text-right px-4 py-3 font-medium">داخلی</th>
-                      <th className="text-right px-4 py-3 font-medium">شماره مستقیم</th>
+                      <SortableHead label="نام" sortKey="name" sort={peopleSort} onSort={sortPeople} />
+                      <SortableHead label="واحد" sortKey="department" sort={peopleSort} onSort={sortPeople} />
+                      <SortableHead label="سمت" sortKey="job_title" sort={peopleSort} onSort={sortPeople} />
+                      <SortableHead label="داخلی" sortKey="extension" sort={peopleSort} onSort={sortPeople} />
+                      <SortableHead label="شماره مستقیم" sortKey="direct" sort={peopleSort} onSort={sortPeople} />
                       <th></th>
                     </tr>
                   </thead>
@@ -1306,9 +1574,21 @@ export default function Admin() {
                 {rows.length === 0 && (
                   <div className="text-center py-14 px-4">
                     <PersonIcon className="w-10 h-10 mx-auto text-ink-300 mb-3" />
+                    {/* «چیزی نیست» و «صافی چیزی نگذاشت» دو خبر متفاوت‌اند */}
                     <p className="text-sm text-ink-500">
-                      هنوز کسی ثبت نشده — فایل اکسل را ایمپورت کنید یا نفر اضافه کنید.
+                      {allPeople.length === 0
+                        ? 'هنوز کسی ثبت نشده — فایل اکسل را ایمپورت کنید یا نفر اضافه کنید.'
+                        : `با «${peopleQuery.trim()}» کسی پیدا نشد.`}
                     </p>
+                    {allPeople.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setPeopleQuery('')}
+                        className="mt-3 text-xs text-tide underline-offset-4 hover:underline"
+                      >
+                        نمایش همه
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -1371,21 +1651,33 @@ export default function Admin() {
               </div>
             </form>
 
+            <div className="mb-4 flex flex-wrap items-center gap-3">
+              <h2 className="text-[15px] font-bold text-ink-900">حساب‌ها</h2>
+              <TableSearch
+                className="ms-auto"
+                label="جستجو در حساب‌ها"
+                placeholder="نام کاربری، واحد، نقش…"
+                value={userQuery}
+                onChange={setUserQuery}
+                count={filteredCount(userRows.length, allUsers.length)}
+              />
+            </div>
+
             <div className="overflow-x-auto rounded-2xl border border-sand-200 bg-paper">
               <table className="w-full min-w-[34rem] text-[14px] tnum sm:min-w-[54rem]">
                 <thead className="bg-sand-100/70 text-xs text-ink-500">
                   <tr>
-                    <th className="whitespace-nowrap px-4 py-3 text-right font-medium">نام کاربری</th>
-                    <th className="whitespace-nowrap px-4 py-3 text-right font-medium">واحد</th>
-                    <th className="whitespace-nowrap px-4 py-3 text-right font-medium">سطح دسترسی</th>
-                    <th className="whitespace-nowrap px-4 py-3 text-right font-medium">وضعیت</th>
+                    <SortableHead label="نام کاربری" sortKey="username" sort={userSort} onSort={sortUsers} className="whitespace-nowrap" ltr />
+                    <SortableHead label="واحد" sortKey="organization" sort={userSort} onSort={sortUsers} className="whitespace-nowrap" />
+                    <SortableHead label="سطح دسترسی" sortKey="role" sort={userSort} onSort={sortUsers} className="whitespace-nowrap" />
+                    <SortableHead label="وضعیت" sortKey="status" sort={userSort} onSort={sortUsers} className="whitespace-nowrap" />
                     <th className="w-full">
                       <span className="sr-only">کارها</span>
                     </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {(users ?? []).map((u) => {
+                  {userRows.map((u) => {
                     /* سرور تغییرِ نقش و غیرفعال‌کردنِ حسابِ خودِ کاربر را رد
                        می‌کند. رابط هم نباید پیشنهادش بدهد — دکمه‌ای که همیشه
                        خطا می‌دهد، دکمه نیست. */
@@ -1504,8 +1796,10 @@ export default function Admin() {
                   })}
                 </tbody>
               </table>
-              {(users ?? []).length === 0 && (
-                <div className="px-4 py-12 text-center text-sm text-ink-400">حسابی ثبت نشده.</div>
+              {userRows.length === 0 && (
+                <div className="px-4 py-12 text-center text-sm text-ink-400">
+                  {allUsers.length === 0 ? 'حسابی ثبت نشده.' : `با «${userQuery.trim()}» حسابی پیدا نشد.`}
+                </div>
               )}
             </div>
             </>
@@ -1521,7 +1815,7 @@ export default function Admin() {
                   <h2 className="text-[15px] font-bold text-ink-900">واحد تازه</h2>
                   <p className="mt-1.5 max-w-[60ch] text-[12.5px] leading-relaxed text-ink-500">
                     هر واحد فضای دادهٔ کاملاً جداگانه دارد: پرسنل، حساب‌ها و گزارش‌هایش را
-                    فقط خودش می‌بیند. کد واحد بعداً عوض نمی‌شود.
+                    فقط خودش می‌بیند.
                   </p>
 
                   <div className="mt-5 grid gap-4 sm:grid-cols-3">
@@ -1560,20 +1854,27 @@ export default function Admin() {
                         id="org-kind"
                         value={newOrg.kind}
                         onChange={(v) => setNewOrg({ ...newOrg, kind: v })}
-                        options={[
-                          { value: 'FACTORY', label: 'کارخانه' },
-                          { value: 'HEAD_OFFICE', label: 'دفتر مرکزی' },
-                        ]}
+                        options={kindOptions}
                       />
                     </div>
                   </div>
 
-                  <div className="mt-5 flex">
+                  <div className="mt-5 flex flex-wrap items-center gap-3">
                     <button
                       type="submit"
                       className="rounded-xl bg-sea-500 px-4 py-2.5 text-sm font-medium text-white transition-colors duration-200 hover:bg-sea-600 active:scale-[.98] dark:text-deep-950 dark:hover:bg-sea-400"
                     >
                       ایجاد واحد
+                    </button>
+                    {/* نوعِ تازه از همین‌جا ساخته می‌شود: کسی که وسطِ ساختِ واحد
+                        می‌بیند نوعِ لازم در فهرست نیست، نباید دنبالِ جای دیگری بگردد. */}
+                    <button
+                      type="button"
+                      onClick={() => setKindsOpen(true)}
+                      className="rounded-xl px-4 py-2.5 text-sm text-ink-500 ring-1 ring-dashed ring-ink-300 transition-colors hover:text-tide hover:ring-sea-500"
+                    >
+                      مدیریت نوع‌ها
+                      <span className="tnum ms-1.5 text-ink-400">({faDigits((kinds ?? []).length)})</span>
                     </button>
                   </div>
                 </form>
@@ -1615,27 +1916,93 @@ export default function Admin() {
                 </div>
               )}
 
-              <div className="overflow-hidden rounded-2xl border border-sand-200 bg-paper">
-                {(organizations ?? []).map((org) => (
-                  <article
-                    key={org.id}
-                    data-row
-                    className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-sand-100 px-4 py-4 first:border-0"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="font-medium text-ink-900">{org.name}</p>
-                      <p dir="ltr" className="mt-1 text-left text-xs text-ink-400">{org.code}</p>
-                    </div>
-                    <span className="text-xs text-ink-500">{organizationKindLabel(org.kind)}</span>
-                    <span
-                      className={`text-xs font-medium ${
-                        org.is_active ? 'text-sea-600 dark:text-sea-400' : 'text-red-500'
-                      }`}
-                    >
-                      {org.is_active ? 'فعال' : 'غیرفعال'}
-                    </span>
-                  </article>
-                ))}
+              <div className="flex flex-wrap items-center gap-3">
+                <h2 className="text-[15px] font-bold text-ink-900">واحدهای سازمانی</h2>
+                <TableSearch
+                  className="ms-auto"
+                  label="جستجو در واحدها"
+                  placeholder="نام، کد یا نوع واحد"
+                  value={orgQuery}
+                  onChange={setOrgQuery}
+                  count={filteredCount(orgRows.length, allOrgs.length)}
+                />
+              </div>
+
+              <div className="overflow-x-auto rounded-2xl border border-sand-200 bg-paper">
+                <table className="w-full min-w-[38rem] text-[14px] tnum">
+                  <thead className="bg-sand-100/70 text-xs text-ink-500">
+                    <tr>
+                      <SortableHead label="نام واحد" sortKey="name" sort={orgSort} onSort={sortOrgs} />
+                      <SortableHead label="کد" sortKey="code" sort={orgSort} onSort={sortOrgs} ltr />
+                      <SortableHead label="نوع" sortKey="kind" sort={orgSort} onSort={sortOrgs} />
+                      <SortableHead label="وضعیت" sortKey="status" sort={orgSort} onSort={sortOrgs} />
+                      <th className="w-full">
+                        <span className="sr-only">کارها</span>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {orgRows.map((org) => {
+                      /* دفتر مرکزی و واحدِ خودِ کاربر پاک نمی‌شوند — سرور هم
+                         ردشان می‌کند. دکمه‌ای که همیشه خطا می‌دهد، دکمه نیست. */
+                      const isHead = org.kind === 'HEAD_OFFICE'
+                      const isOwn = org.id === session?.organization_id
+                      return (
+                        <tr
+                          key={org.id}
+                          data-row
+                          className="border-t border-sand-100 transition-colors duration-150 hover:bg-tint/50"
+                        >
+                          <td className="px-4 py-3 font-medium text-ink-900">{org.name}</td>
+                          <td dir="ltr" className="px-4 py-3 text-left text-xs text-ink-500">{org.code}</td>
+                          <td className="whitespace-nowrap px-4 py-3 text-ink-600">{kindName(org.kind)}</td>
+                          <td className="whitespace-nowrap px-4 py-3 text-xs">
+                            {org.is_active ? (
+                              <span className="font-medium text-sea-600 dark:text-sea-400">فعال</span>
+                            ) : (
+                              <span className="font-medium text-red-500">غیرفعال</span>
+                            )}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-left">
+                            {isGlobal ? (
+                              <span className="inline-flex items-center gap-3">
+                                <button
+                                  type="button"
+                                  onClick={() => openOrg(org)}
+                                  className="rounded text-xs text-tide underline-offset-4 transition-colors hover:text-ink-900 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sea-500/40"
+                                >
+                                  ویرایش
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setOrgDeleting(org)}
+                                  disabled={isHead || isOwn}
+                                  title={
+                                    isHead
+                                      ? 'دفتر مرکزی حذف نمی‌شود'
+                                      : isOwn
+                                        ? 'واحد خودتان را نمی‌توانید حذف کنید'
+                                        : undefined
+                                  }
+                                  className="rounded text-xs text-red-500 underline-offset-4 transition-colors hover:text-red-600 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/40 disabled:cursor-not-allowed disabled:text-ink-300 disabled:no-underline"
+                                >
+                                  حذف
+                                </button>
+                              </span>
+                            ) : (
+                              <span className="text-xs text-ink-300">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+                {orgRows.length === 0 && (
+                  <div className="px-4 py-12 text-center text-sm text-ink-400">
+                    {allOrgs.length === 0 ? 'واحدی ثبت نشده.' : `با «${orgQuery.trim()}» واحدی پیدا نشد.`}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -2149,6 +2516,347 @@ export default function Admin() {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* ویرایش واحد — نام، کد، نوع و فعال‌بودن، یک‌جا و یک‌بار ثبت. */}
+      {orgEditing && (
+        <div
+          ref={orgDialogRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label={`ویرایش واحد ${orgEditing.name}`}
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !orgBusy) setOrgEditing(null)
+          }}
+          className="fixed inset-0 z-50 flex items-end justify-center bg-deep-950/45 p-0 backdrop-blur-sm sm:items-center sm:p-6"
+        >
+          <form
+            onSubmit={saveOrg}
+            className="max-h-[88dvh] w-full max-w-md overflow-y-auto rounded-t-2xl border border-sand-200 bg-paper p-6 shadow-panel sm:rounded-2xl"
+          >
+            <div className="mb-5 flex items-start justify-between gap-3">
+              <h2 className="text-lg font-bold text-ink-900">ویرایش واحد</h2>
+              <button
+                type="button"
+                onClick={() => setOrgEditing(null)}
+                aria-label="بستن"
+                className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-ink-400 transition-colors duration-200 hover:bg-sand-100 hover:text-ink-700"
+              >
+                <CloseIcon className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="grid gap-4">
+              <div>
+                <label htmlFor="edit-org-name" className="mb-1.5 block text-xs font-medium text-ink-500">
+                  نام واحد
+                </label>
+                <input
+                  id="edit-org-name"
+                  required
+                  value={orgDraft.name}
+                  onChange={(e) => setOrgDraft({ ...orgDraft, name: e.target.value })}
+                  className="w-full rounded-xl border border-sand-300 bg-sand-50/60 px-3 py-2 text-sm text-ink-900 transition-colors focus:border-sea-500 focus:bg-paper focus:outline-none focus:ring-2 focus:ring-sea-500/20"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="edit-org-code" className="mb-1.5 block text-xs font-medium text-ink-500">
+                  کد
+                </label>
+                <input
+                  id="edit-org-code"
+                  dir="ltr"
+                  required
+                  value={orgDraft.code}
+                  onChange={(e) => setOrgDraft({ ...orgDraft, code: e.target.value })}
+                  className="w-full rounded-xl border border-sand-300 bg-sand-50/60 px-3 py-2 text-left text-sm text-ink-900 transition-colors focus:border-sea-500 focus:bg-paper focus:outline-none focus:ring-2 focus:ring-sea-500/20"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="edit-org-kind" className="mb-1.5 block text-xs font-medium text-ink-500">
+                  نوع
+                </label>
+                <Select
+                  id="edit-org-kind"
+                  value={orgDraft.kind}
+                  onChange={(v) => setOrgDraft({ ...orgDraft, kind: v })}
+                  options={kindOptions}
+                />
+              </div>
+
+              {/* دفتر مرکزی نه غیرفعال می‌شود و نه نوعش عوض — قاعده‌ای که سرور
+                  هم دارد. جای گفتنش همین‌جاست، نه بعد از یک خطای رد شده. */}
+              {orgEditing.kind === 'HEAD_OFFICE' ? (
+                <p className="rounded-xl border border-sand-200 bg-sand-50/60 px-3.5 py-3 text-[12.5px] leading-relaxed text-ink-500">
+                  دفتر مرکزی همیشه فعال می‌ماند و تا وقتی حساب‌های مدیریتی در آن باشند
+                  نوعش عوض نمی‌شود — نقش‌های «مدیر کل سامانه» و «مدیر دسترسی دفتر مرکزی»
+                  فقط در واحدی از این نوع معنا دارند.
+                </p>
+              ) : (
+                <label className="flex cursor-pointer select-none items-center gap-2 text-[13px] text-ink-700">
+                  <input
+                    type="checkbox"
+                    className="pick"
+                    checked={orgDraft.is_active}
+                    onChange={(e) => setOrgDraft({ ...orgDraft, is_active: e.target.checked })}
+                  />
+                  واحد فعال است
+                </label>
+              )}
+
+              {!orgDraft.is_active && orgEditing.is_active && (
+                <p className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-[12.5px] leading-relaxed text-amber-900 dark:border-amber-400/40 dark:bg-amber-400/10 dark:text-amber-200">
+                  با غیرفعال شدن این واحد، حساب‌هایش دیگر وارد نمی‌شوند. داده‌ها سر جایشان
+                  می‌مانند و با فعال‌کردن دوباره برمی‌گردند.
+                </p>
+              )}
+            </div>
+
+            <div className="mt-6 flex gap-3">
+              <button
+                type="submit"
+                disabled={orgBusy}
+                className="flex-1 rounded-xl bg-sea-500 py-3 font-medium text-white transition-colors duration-200 hover:bg-sea-600 active:scale-[.98] disabled:opacity-60 dark:text-deep-950 dark:hover:bg-sea-400"
+              >
+                {orgBusy ? 'در حال ثبت…' : 'ذخیره'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setOrgEditing(null)}
+                disabled={orgBusy}
+                className="rounded-xl bg-sand-100 px-6 text-ink-700 transition-colors hover:bg-sand-200 disabled:opacity-60"
+              >
+                انصراف
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* حذفِ واحد — برگشت ندارد، و فقط واحدِ خالی حذف می‌شود. */}
+      {orgDeleting && (
+        <div
+          ref={orgDeleteDialogRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label={`حذف واحد ${orgDeleting.name}`}
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !orgDeleteBusy) setOrgDeleting(null)
+          }}
+          className="fixed inset-0 z-50 flex items-end justify-center bg-deep-950/45 p-0 backdrop-blur-sm sm:items-center sm:p-6"
+        >
+          <div className="w-full max-w-md space-y-4 rounded-t-2xl border border-sand-200 bg-paper p-6 shadow-panel sm:rounded-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <h2 className="text-lg font-bold text-ink-900">حذف واحد</h2>
+              <button
+                type="button"
+                onClick={() => setOrgDeleting(null)}
+                aria-label="بستن"
+                className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-ink-400 transition-colors duration-200 hover:bg-sand-100 hover:text-ink-700"
+              >
+                <CloseIcon className="h-4 w-4" />
+              </button>
+            </div>
+
+            <p className="text-sm text-ink-500">
+              <span className="font-medium text-ink-900">{orgDeleting.name}</span>
+              <span className="mx-1.5 text-sand-300">·</span>
+              <span dir="ltr">{orgDeleting.code}</span>
+              <span className="mx-1.5 text-sand-300">·</span>
+              {kindName(orgDeleting.kind)}
+            </p>
+
+            <ul className="space-y-1.5 rounded-xl border border-sand-200 bg-sand-50/60 p-3.5 text-[12.5px] leading-relaxed text-ink-600">
+              <li>واحدی که هنوز پرسنل یا حساب دارد حذف نمی‌شود — اول آن‌ها را جابه‌جا یا حذف کنید.</li>
+              <li>نوعِ این واحد سر جایش می‌ماند؛ نوع‌ها جدا مدیریت می‌شوند.</li>
+              <li>آنچه در این واحد انجام شده، در تبِ «تغییرات» باقی می‌ماند.</li>
+            </ul>
+
+            <div className="flex gap-3 pt-1">
+              <button
+                type="button"
+                onClick={removeOrg}
+                disabled={orgDeleteBusy}
+                className="flex-1 rounded-xl bg-red-500 py-3 font-medium text-white transition-colors duration-200 hover:bg-red-600 active:scale-[.98] disabled:opacity-60"
+              >
+                {orgDeleteBusy ? 'در حال حذف…' : 'بله، حذف کن'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setOrgDeleting(null)}
+                disabled={orgDeleteBusy}
+                className="rounded-xl bg-sand-100 px-6 text-ink-700 transition-colors hover:bg-sand-200 disabled:opacity-60"
+              >
+                انصراف
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* نوع‌های واحد — واژگانی که ادمین می‌نویسد، نه فهرستی که در کد ثابت است. */}
+      {kindsOpen && (
+        <div
+          ref={kindsDialogRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label="نوع‌های واحد سازمانی"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !kindBusy) { setKindsOpen(false); setKindDraft(null) }
+          }}
+          className="fixed inset-0 z-50 flex items-end justify-center bg-deep-950/45 p-0 backdrop-blur-sm sm:items-center sm:p-6"
+        >
+          <div className="max-h-[88dvh] w-full max-w-lg overflow-y-auto rounded-t-2xl border border-sand-200 bg-paper p-6 shadow-panel sm:rounded-2xl">
+            <div className="mb-1 flex items-start justify-between gap-3">
+              <h2 className="text-lg font-bold text-ink-900">نوع‌های واحد</h2>
+              <button
+                type="button"
+                onClick={() => { setKindsOpen(false); setKindDraft(null) }}
+                aria-label="بستن"
+                className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-ink-400 transition-colors duration-200 hover:bg-sand-100 hover:text-ink-700"
+              >
+                <CloseIcon className="h-4 w-4" />
+              </button>
+            </div>
+
+            <p className="mb-5 max-w-[56ch] text-[12.5px] leading-relaxed text-ink-500">
+              «کارخانه» و «دفتر مرکزی» دیگر تنها گزینه‌ها نیستند. هر نوعی که اینجا بسازید
+              موقع ساخت یا ویرایش واحد قابل انتخاب است. دو نوعِ پایه را می‌توان تغییر نام
+              داد ولی نه حذف کرد: قاعده‌های دسترسیِ سامانه به آن‌ها گره خورده‌اند.
+            </p>
+
+            <form onSubmit={addKind} className="mb-5 grid gap-3 rounded-xl border border-sand-200 bg-sand-50/60 p-4 sm:grid-cols-[1fr_auto_auto]">
+              <div>
+                <label htmlFor="kind-name" className="mb-1.5 block text-xs font-medium text-ink-500">
+                  نام نوع
+                </label>
+                <input
+                  id="kind-name"
+                  required
+                  placeholder="انبار"
+                  value={newKind.name}
+                  onChange={(e) => setNewKind({ ...newKind, name: e.target.value })}
+                  className="w-full rounded-xl border border-sand-300 bg-paper px-3 py-2 text-sm text-ink-900 transition-colors placeholder:text-ink-300 focus:border-sea-500 focus:outline-none focus:ring-2 focus:ring-sea-500/20"
+                />
+              </div>
+              <div>
+                <label htmlFor="kind-code" className="mb-1.5 block text-xs font-medium text-ink-500">
+                  کد
+                </label>
+                <input
+                  id="kind-code"
+                  dir="ltr"
+                  required
+                  placeholder="WAREHOUSE"
+                  value={newKind.code}
+                  onChange={(e) => setNewKind({ ...newKind, code: e.target.value })}
+                  className="w-full rounded-xl border border-sand-300 bg-paper px-3 py-2 text-left text-sm text-ink-900 transition-colors placeholder:text-ink-300 focus:border-sea-500 focus:outline-none focus:ring-2 focus:ring-sea-500/20 sm:w-40"
+                />
+              </div>
+              <div className="flex items-end">
+                <button
+                  type="submit"
+                  disabled={kindBusy}
+                  className="w-full rounded-xl bg-sea-500 px-4 py-2.5 text-sm font-medium text-white transition-colors duration-200 hover:bg-sea-600 active:scale-[.98] disabled:opacity-60 dark:text-deep-950 dark:hover:bg-sea-400"
+                >
+                  افزودن
+                </button>
+              </div>
+            </form>
+
+            <div className="overflow-hidden rounded-xl border border-sand-200">
+              {(kinds ?? []).map((kind) => (
+                <div
+                  key={kind.id}
+                  className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-sand-100 px-4 py-3 first:border-t-0"
+                >
+                  {kindDraft?.id === kind.id ? (
+                    <form onSubmit={renameKind} className="flex flex-1 items-center gap-2">
+                      <input
+                        autoFocus
+                        required
+                        value={kindDraft.name}
+                        onChange={(e) => setKindDraft({ id: kind.id, name: e.target.value })}
+                        className="min-w-0 flex-1 rounded-lg border border-sand-300 bg-sand-50/60 px-2.5 py-1.5 text-sm text-ink-900 focus:border-sea-500 focus:bg-paper focus:outline-none focus:ring-2 focus:ring-sea-500/20"
+                      />
+                      <button
+                        type="submit"
+                        disabled={kindBusy}
+                        className="rounded-lg bg-sea-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-sea-600 disabled:opacity-60 dark:text-deep-950"
+                      >
+                        ثبت
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setKindDraft(null)}
+                        className="rounded-lg px-2.5 py-1.5 text-xs text-ink-500 transition-colors hover:bg-sand-100 hover:text-ink-900"
+                      >
+                        لغو
+                      </button>
+                    </form>
+                  ) : (
+                    <>
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium text-ink-900">{kind.name}</p>
+                        <p dir="ltr" className="mt-0.5 text-left text-[11px] text-ink-400">{kind.code}</p>
+                      </div>
+
+                      <span className="tnum whitespace-nowrap text-xs text-ink-400">
+                        {kind.usage_count > 0
+                          ? `${faDigits(kind.usage_count)} واحد`
+                          : 'بی‌استفاده'}
+                      </span>
+
+                      {kind.is_system && (
+                        <span className="rounded-md bg-tint px-1.5 py-0.5 text-[11px] text-ink-500">پایه</span>
+                      )}
+
+                      {isGlobal && (
+                        <span className="inline-flex items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() => setKindDraft({ id: kind.id, name: kind.name })}
+                            className="rounded text-xs text-tide underline-offset-4 transition-colors hover:text-ink-900 hover:underline"
+                          >
+                            تغییر نام
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeKind(kind)}
+                            disabled={kind.is_system || kind.usage_count > 0}
+                            title={
+                              kind.is_system
+                                ? 'نوع پایهٔ سامانه حذف نمی‌شود'
+                                : kind.usage_count > 0
+                                  ? 'این نوع در استفاده است'
+                                  : undefined
+                            }
+                            className="rounded text-xs text-red-500 underline-offset-4 transition-colors hover:text-red-600 hover:underline disabled:cursor-not-allowed disabled:text-ink-300 disabled:no-underline"
+                          >
+                            حذف
+                          </button>
+                        </span>
+                      )}
+                    </>
+                  )}
+                </div>
+              ))}
+              {(kinds ?? []).length === 0 && (
+                <p className="px-4 py-8 text-center text-sm text-ink-400">نوعی ثبت نشده.</p>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => { setKindsOpen(false); setKindDraft(null) }}
+              className="mt-5 w-full rounded-xl bg-sand-100 py-3 text-ink-700 transition-colors hover:bg-sand-200"
+            >
+              بستن
+            </button>
+          </div>
         </div>
       )}
 

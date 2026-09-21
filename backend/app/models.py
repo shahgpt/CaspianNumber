@@ -20,7 +20,15 @@ VALID_ROLES = {ROLE_UNIT_USER, ROLE_UNIT_MANAGER, ROLE_HEAD_OFFICE_ACCESS_ADMIN,
 
 ORG_HEAD_OFFICE = "HEAD_OFFICE"
 ORG_FACTORY = "FACTORY"
-VALID_ORGANIZATION_TYPES = {ORG_HEAD_OFFICE, ORG_FACTORY}
+
+# The two built-in unit types. They are rows in `organization_kinds` like any
+# other, but they cannot be removed: HEAD_OFFICE decides where the two elevated
+# roles may live, and FACTORY is what a unit falls back to. Their Persian labels
+# are editable; their codes and existence are not.
+SYSTEM_ORGANIZATION_KINDS: tuple[tuple[str, str], ...] = (
+    (ORG_HEAD_OFFICE, "دفتر مرکزی"),
+    (ORG_FACTORY, "کارخانه"),
+)
 
 
 class Base(DeclarativeBase):
@@ -40,6 +48,24 @@ if engine.url.drivername.startswith("sqlite"):
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
+
+
+class OrganizationKind(Base):
+    """The vocabulary of unit types, managed from the admin panel.
+
+    `kind` on an organization used to be a closed enum in this module, so adding
+    a third type meant a code change. It is a lookup table now; the two system
+    rows keep the behaviour the rest of the code depends on.
+    """
+    __tablename__ = "organization_kinds"
+
+    id = Column(Integer, primary_key=True)
+    # Mirrors the width of Organization.kind, which stores this code.
+    code = Column(String(24), nullable=False, unique=True, index=True)
+    name = Column(String(64), nullable=False)
+    is_system = Column(Boolean, nullable=False, default=False)
+    sort_order = Column(Integer, nullable=False, default=100)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class Organization(Base):
@@ -248,6 +274,42 @@ def _migrate_sqlite() -> None:
             conn.execute(text("UPDATE change_log SET organization_id=1 WHERE organization_id IS NULL"))
 
 
+def seed_organization_kinds() -> None:
+    """Make sure the two built-in unit types exist, without touching labels.
+
+    An installation that renamed "کارخانه" keeps its label across restarts: only
+    a missing row is inserted, and `is_system` is re-asserted so the protection
+    survives a row that was created by hand.
+    """
+    db = SessionLocal()
+    try:
+        changed = False
+        # Rows added below are not visible to a query until they are flushed, so
+        # the set — not the database — is what says whether a code is spoken for.
+        known = {row.code for row in db.query(OrganizationKind).all()}
+        for order, (code, name) in enumerate(SYSTEM_ORGANIZATION_KINDS):
+            if code not in known:
+                db.add(OrganizationKind(code=code, name=name, is_system=True, sort_order=order))
+                known.add(code)
+                changed = True
+                continue
+            row = db.query(OrganizationKind).filter(OrganizationKind.code == code).first()
+            if row is not None and not row.is_system:
+                row.is_system = True
+                changed = True
+        # A unit whose type predates this table would otherwise show a raw code
+        # in the panel forever, with no way to rename it.
+        for (kind,) in db.query(Organization.kind).distinct():
+            if kind and kind not in known:
+                db.add(OrganizationKind(code=kind, name=kind, is_system=False, sort_order=100))
+                known.add(kind)
+                changed = True
+        if changed:
+            db.commit()
+    finally:
+        db.close()
+
+
 def backfill_direct_numbers() -> None:
     db = SessionLocal()
     try:
@@ -282,6 +344,7 @@ def init_db() -> None:
     Base.metadata.create_all(engine)
     if engine.url.drivername.startswith("sqlite"):
         _migrate_sqlite()
+    seed_organization_kinds()
     backfill_direct_numbers()
     try:
         reindex_fts()

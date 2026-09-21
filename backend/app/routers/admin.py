@@ -4,22 +4,26 @@ from __future__ import annotations
 from datetime import timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from .. import fts
 from ..ai import suggest_fields
+from ..analytics import build_overview
 from ..audit import audit_event
+from ..core.persian import fa_digits
 from ..database import get_db
 from ..importer import apply_import, parse_csv, parse_xlsx
 from ..models import (
-    ORG_HEAD_OFFICE, ROLE_GLOBAL_ADMIN, ROLE_HEAD_OFFICE_ACCESS_ADMIN,
-    ROLE_UNIT_MANAGER, ROLE_UNIT_USER, VALID_ORGANIZATION_TYPES, VALID_ROLES,
-    ChangeLog, Employee, Organization, User, gen_temp_password, is_temp_password,
+    ORG_FACTORY, ORG_HEAD_OFFICE, ROLE_GLOBAL_ADMIN, ROLE_HEAD_OFFICE_ACCESS_ADMIN,
+    ROLE_UNIT_MANAGER, ROLE_UNIT_USER, VALID_ROLES,
+    ChangeLog, Employee, Organization, OrganizationKind, User,
+    gen_temp_password, is_temp_password,
 )
 from ..schemas import (
     BulkDeleteIn, EmployeeCreate, EmployeeOut, EmployeeUpdate, ImportResult,
-    OrganizationCreate, OrganizationOut, OrganizationUpdate, SuggestOut,
+    OrganizationCreate, OrganizationKindCreate, OrganizationKindOut,
+    OrganizationKindUpdate, OrganizationOut, OrganizationUpdate, SuggestOut,
     TempPasswordOut, UserCreate, UserCreatedOut, UserCredentialsIn, UserOut,
     UserRoleUpdate,
 )
@@ -98,7 +102,129 @@ def _require_privileged_account_management(actor: User, target: User) -> None:
         raise HTTPException(403, "مدیریت این حساب فقط از حساب مدیر سامانه ممکن است")
 
 
+# ---------------- Organization types ----------------
+
+def _kind_or_404(db: Session, kind_id: int) -> OrganizationKind:
+    kind = db.get(OrganizationKind, kind_id)
+    if not kind:
+        raise HTTPException(404, "نوع واحد یافت نشد")
+    return kind
+
+
+def _kind_usage(db: Session) -> dict[str, int]:
+    return {
+        code: count
+        for code, count in db.query(Organization.kind, func.count(Organization.id))
+        .group_by(Organization.kind)
+        .all()
+    }
+
+
+def _kind_payload(kind: OrganizationKind, usage: dict[str, int]) -> dict:
+    return {
+        "id": kind.id, "code": kind.code, "name": kind.name,
+        "is_system": kind.is_system, "sort_order": kind.sort_order,
+        "usage_count": usage.get(kind.code, 0),
+    }
+
+
+@router.get("/organization-kinds", response_model=list[OrganizationKindOut])
+def list_organization_kinds(user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Every admin reads the vocabulary — a unit's type is shown in every list."""
+    usage = _kind_usage(db)
+    rows = db.query(OrganizationKind).order_by(OrganizationKind.sort_order, OrganizationKind.id).all()
+    return [_kind_payload(row, usage) for row in rows]
+
+
+@router.post("/organization-kinds", response_model=OrganizationKindOut)
+def create_organization_kind(
+    data: OrganizationKindCreate, request: Request,
+    user: User = Depends(require_global_admin), db: Session = Depends(get_db),
+):
+    code = data.code.strip().upper()
+    name = data.name.strip()
+    if db.query(OrganizationKind).filter(
+        or_(OrganizationKind.code == code, OrganizationKind.name == name)
+    ).first():
+        raise HTTPException(400, "این نوع قبلاً ثبت شده است")
+    kind = OrganizationKind(code=code, name=name, sort_order=data.sort_order, is_system=False)
+    db.add(kind)
+    db.flush()
+    audit_event(db, action="ORGANIZATION_KIND_CREATED", entity="organization_kind", entity_id=kind.id,
+                organization_id=user.organization_id, actor=user, request=request,
+                details={"name": name, "code": code})
+    db.commit()
+    return _kind_payload(kind, _kind_usage(db))
+
+
+@router.patch("/organization-kinds/{kind_id}", response_model=OrganizationKindOut)
+def update_organization_kind(
+    kind_id: int, data: OrganizationKindUpdate, request: Request,
+    user: User = Depends(require_global_admin), db: Session = Depends(get_db),
+):
+    kind = _kind_or_404(db, kind_id)
+    changes = data.model_dump(exclude_none=True)
+    if "name" in changes:
+        changes["name"] = changes["name"].strip()
+    if "code" in changes:
+        changes["code"] = changes["code"].strip().upper()
+        # HEAD_OFFICE and FACTORY are read by name elsewhere in the code; renaming
+        # the label is free, moving the code out from under that is not.
+        if kind.is_system and changes["code"] != kind.code:
+            raise HTTPException(400, "کد نوع‌های پایه عوض نمی‌شود؛ فقط نامش را می‌توان تغییر داد")
+    duplicates = []
+    if "code" in changes:
+        duplicates.append(OrganizationKind.code == changes["code"])
+    if "name" in changes:
+        duplicates.append(OrganizationKind.name == changes["name"])
+    if duplicates and db.query(OrganizationKind).filter(
+        OrganizationKind.id != kind.id, or_(*duplicates)
+    ).first():
+        raise HTTPException(400, "این نوع قبلاً ثبت شده است")
+    before = {field: getattr(kind, field) for field in changes}
+    old_code = kind.code
+    for field, value in changes.items():
+        setattr(kind, field, value)
+    # The code is denormalized onto every unit that carries this type; a rename
+    # that left them behind would orphan them from their own type.
+    if changes.get("code") and changes["code"] != old_code:
+        db.query(Organization).filter(Organization.kind == old_code).update(
+            {Organization.kind: changes["code"]}, synchronize_session=False
+        )
+    audit_event(db, action="ORGANIZATION_KIND_UPDATED", entity="organization_kind", entity_id=kind.id,
+                organization_id=user.organization_id, actor=user, request=request,
+                details={field: {"from": before[field], "to": value} for field, value in changes.items()})
+    db.commit()
+    return _kind_payload(kind, _kind_usage(db))
+
+
+@router.delete("/organization-kinds/{kind_id}")
+def delete_organization_kind(
+    kind_id: int, request: Request,
+    user: User = Depends(require_global_admin), db: Session = Depends(get_db),
+):
+    kind = _kind_or_404(db, kind_id)
+    if kind.is_system:
+        raise HTTPException(400, "نوع‌های پایهٔ سامانه حذف نمی‌شوند")
+    in_use = _kind_usage(db).get(kind.code, 0)
+    if in_use:
+        raise HTTPException(400, f"این نوع برای {fa_digits(in_use)} واحد در استفاده است؛ اول نوع آن‌ها را عوض کنید")
+    name = kind.name
+    db.delete(kind)
+    audit_event(db, action="ORGANIZATION_KIND_DELETED", entity="organization_kind", entity_id=kind_id,
+                organization_id=user.organization_id, actor=user, request=request, details={"name": name})
+    db.commit()
+    return {"ok": True, "name": name}
+
+
 # ---------------- Organizations ----------------
+
+def _valid_kind_or_400(db: Session, code: str) -> str:
+    code = (code or "").strip().upper()
+    if not db.query(OrganizationKind).filter(OrganizationKind.code == code).first():
+        raise HTTPException(400, "نوع واحد سازمانی معتبر نیست")
+    return code
+
 
 @router.get("/organizations", response_model=list[OrganizationOut])
 def list_organizations(user: User = Depends(require_admin), db: Session = Depends(get_db)):
@@ -113,17 +239,16 @@ def create_organization(
     data: OrganizationCreate, request: Request,
     user: User = Depends(require_global_admin), db: Session = Depends(get_db),
 ):
-    if data.kind not in VALID_ORGANIZATION_TYPES:
-        raise HTTPException(400, "نوع واحد سازمانی معتبر نیست")
+    kind = _valid_kind_or_400(db, data.kind)
     code = data.code.strip().upper()
     name = data.name.strip()
     if db.query(Organization).filter(or_(Organization.code == code, Organization.name == name)).first():
         raise HTTPException(400, "نام یا کد واحد قبلاً ثبت شده است")
-    org = Organization(name=name, code=code, kind=data.kind)
+    org = Organization(name=name, code=code, kind=kind)
     db.add(org)
     db.flush()
     audit_event(db, action="ORGANIZATION_CREATED", entity="organization", entity_id=org.id,
-                organization_id=org.id, actor=user, request=request, details={"name": name, "kind": data.kind})
+                organization_id=org.id, actor=user, request=request, details={"name": name, "kind": kind})
     db.commit()
     return org
 
@@ -141,8 +266,19 @@ def update_organization(
         changes["code"] = changes["code"].strip().upper()
     if "name" in changes:
         changes["name"] = changes["name"].strip()
+    if "kind" in changes:
+        changes["kind"] = _valid_kind_or_400(db, changes["kind"])
     if changes.get("is_active") is False and org.kind == ORG_HEAD_OFFICE:
         raise HTTPException(400, "دفتر مرکزی را نمی‌توان غیرفعال کرد")
+    # Moving the head office out of its own type would strand every elevated
+    # account that only exists because the unit is the head office.
+    if changes.get("kind") and org.kind == ORG_HEAD_OFFICE and changes["kind"] != ORG_HEAD_OFFICE:
+        elevated = db.query(func.count(User.id)).filter(
+            User.organization_id == org.id,
+            User.role.in_([ROLE_GLOBAL_ADMIN, ROLE_HEAD_OFFICE_ACCESS_ADMIN]),
+        ).scalar() or 0
+        if elevated:
+            raise HTTPException(400, "نوع این واحد عوض نمی‌شود؛ حساب‌های مدیریتی دفتر مرکزی در آن قرار دارند")
     duplicate_filters = []
     if "code" in changes:
         duplicate_filters.append(Organization.code == changes["code"])
@@ -160,6 +296,44 @@ def update_organization(
                 details={field: {"from": before[field], "to": value} for field, value in changes.items()})
     db.commit()
     return org
+
+
+@router.delete("/organizations/{org_id}")
+def delete_organization(
+    org_id: int, request: Request,
+    user: User = Depends(require_global_admin), db: Session = Depends(get_db),
+):
+    """Remove an empty unit. A unit that still holds data is never emptied here.
+
+    Deleting a unit with people or accounts in it would either cascade into a
+    silent mass delete or trip the RESTRICT foreign key as a 500. Both are worse
+    than saying what is in the way.
+    """
+    _require_delete(user)
+    org = db.get(Organization, org_id)
+    if not org:
+        raise HTTPException(404, "واحد سازمانی یافت نشد")
+    if org.kind == ORG_HEAD_OFFICE:
+        raise HTTPException(400, "دفتر مرکزی حذف نمی‌شود")
+    if org.id == user.organization_id:
+        raise HTTPException(400, "واحد خودتان را نمی‌توانید حذف کنید")
+    people = db.query(func.count(Employee.id)).filter(Employee.organization_id == org.id).scalar() or 0
+    accounts = db.query(func.count(User.id)).filter(User.organization_id == org.id).scalar() or 0
+    if people or accounts:
+        raise HTTPException(
+            400,
+            f"این واحد {fa_digits(people)} پرسنل و {fa_digits(accounts)} حساب دارد؛ اول آن‌ها را حذف یا منتقل کنید",
+        )
+    name = org.name
+    # The trail outlives the unit, exactly as it outlives a deleted account.
+    db.query(ChangeLog).filter(ChangeLog.organization_id == org.id).update(
+        {ChangeLog.organization_id: None}, synchronize_session=False
+    )
+    db.delete(org)
+    audit_event(db, action="ORGANIZATION_DELETED", entity="organization", entity_id=org_id,
+                organization_id=None, actor=user, request=request, details={"name": name})
+    db.commit()
+    return {"ok": True, "name": name}
 
 
 # ---------------- Employees ----------------
@@ -235,7 +409,7 @@ def bulk_delete_employees(
     if not ids:
         raise HTTPException(400, "کسی برای حذف انتخاب نشده است")
     if len(ids) > BULK_DELETE_MAX:
-        raise HTTPException(400, f"در هر نوبت حداکثر {BULK_DELETE_MAX} نفر حذف می‌شود")
+        raise HTTPException(400, f"در هر نوبت حداکثر {fa_digits(BULK_DELETE_MAX)} نفر حذف می‌شود")
     scope = _scope(user, organization_id, db)
     query = db.query(Employee).filter(Employee.id.in_(ids))
     if scope is not None:
@@ -500,3 +674,24 @@ def list_logs(
         "details": r.details,
         "at": r.at.replace(tzinfo=r.at.tzinfo or timezone.utc).isoformat() if r.at else None,
     } for r in rows]
+
+
+# ---------------- Usage overview ----------------
+
+@router.get("/analytics")
+def usage_overview(
+    request: Request, days: int = 30, organization_id: int | None = None,
+    user: User = Depends(require_admin), db: Session = Depends(get_db),
+):
+    """Read the audit trail back as usage figures.
+
+    Same tenant rule as every other list here: a unit manager sees their own
+    unit, and the global admin sees everything only while no unit is selected.
+    """
+    scope = _scope(user, organization_id, db)
+    overview = build_overview(db, days=days, organization_id=scope)
+    audit_event(db, action="AUDIT_LOG_VIEW", entity="audit", actor=user,
+                organization_id=scope, request=request,
+                details={"view": "overview", "days": overview["range"]["days"]})
+    db.commit()
+    return overview

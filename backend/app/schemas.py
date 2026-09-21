@@ -77,14 +77,43 @@ class OrganizationOut(BaseModel):
 
 class OrganizationCreate(BaseModel):
     name: str = Field(min_length=2, max_length=128)
-    code: str = Field(min_length=2, max_length=32, pattern=r"^[A-Za-z0-9_-]+$")
+    code: str = Field(min_length=2, max_length=24, pattern=r"^[A-Za-z0-9_-]+$")
     kind: str = "FACTORY"
 
 
 class OrganizationUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: Optional[str] = Field(default=None, min_length=2, max_length=128)
-    code: Optional[str] = Field(default=None, min_length=2, max_length=32, pattern=r"^[A-Za-z0-9_-]+$")
+    code: Optional[str] = Field(default=None, min_length=2, max_length=24, pattern=r"^[A-Za-z0-9_-]+$")
+    kind: Optional[str] = Field(default=None, min_length=2, max_length=24)
     is_active: Optional[bool] = None
+
+
+class OrganizationKindOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    code: str
+    name: str
+    is_system: bool
+    sort_order: int = 100
+    # How many units currently carry this type. A type in use cannot be deleted,
+    # and the panel should say so before the button is pressed.
+    usage_count: int = 0
+
+
+class OrganizationKindCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=64)
+    code: str = Field(min_length=2, max_length=24, pattern=r"^[A-Za-z0-9_-]+$")
+    sort_order: int = 100
+
+
+class OrganizationKindUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: Optional[str] = Field(default=None, min_length=1, max_length=64)
+    # The code of a system type is load-bearing and stays put; see the router.
+    code: Optional[str] = Field(default=None, min_length=2, max_length=24, pattern=r"^[A-Za-z0-9_-]+$")
+    sort_order: Optional[int] = None
 
 
 class UserOut(BaseModel):

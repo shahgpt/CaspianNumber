@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     AI_API_KEY: str = ""
     AI_MODEL: str = "gpt-4o-mini"
 
+    # Audit rows are stored in UTC. The overview page groups them into the days
+    # and hours its readers actually live in, so "امروز" means the local day.
+    # Minutes east of UTC; Iran is +3:30.
+    REPORT_UTC_OFFSET_MINUTES: int = 210
+
     ADMIN_USERNAME: str = "admin"
     ADMIN_PASSWORD: str = "admin123"
     HEAD_OFFICE_NAME: str = "دفتر مرکزی"

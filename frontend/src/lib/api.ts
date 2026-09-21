@@ -63,9 +63,41 @@ export async function api<T = unknown>(
   }
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
-    throw new Error((data as { detail?: string }).detail || 'خطای غیرمنتظره')
+    throw new Error(errorMessage(data, res.status))
   }
   return data as T
+}
+
+type ValidationIssue = { loc?: unknown[]; msg?: string }
+
+/**
+ * پیامِ خطای سرور، به فارسی و خوانا.
+ *
+ * ۴۲۲ از FastAPI `detail` را یک آرایه می‌فرستد، نه یک رشته. چسباندنِ مستقیمِ
+ * آن به `new Error` رویِ صفحه «[object Object]» می‌شد — یعنی کاربر می‌دید
+ * کاری انجام نشده ولی نمی‌فهمید چرا. نامِ فیلدِ ایرادزا از `loc` بیرون
+ * می‌آید، چون همان تنها چیزی است که به دردِ کسی می‌خورد که فرم را پر کرده.
+ */
+export function errorMessage(data: unknown, status = 0): string {
+  const detail = (data as { detail?: unknown })?.detail
+  if (typeof detail === 'string' && detail.trim()) return detail
+  if (Array.isArray(detail)) {
+    const parts = (detail as ValidationIssue[])
+      .map((issue) => {
+        const field = Array.isArray(issue.loc)
+          ? issue.loc.filter((p) => p !== 'body').join('.')
+          : ''
+        // «Value error, ایمیل معتبر نیست» — نیمه‌ی اولش نامِ درونیِ نوعِ
+        // خطا در Pydantic است و برای کسی که فرم را پر کرده معنا ندارد.
+        const msg = String(issue.msg ?? '').replace(/^(Value|Assertion) error,\s*/i, '').trim()
+        return field && msg ? `${field}: ${msg}` : msg || field
+      })
+      .filter(Boolean)
+    if (parts.length) return parts.slice(0, 3).join(' · ')
+  }
+  if (status === 403) return 'اجازهٔ این کار را ندارید'
+  if (status === 404) return 'یافت نشد'
+  return 'خطای غیرمنتظره'
 }
 
 /** Convert Persian/Arabic digits to Latin for tel: links */

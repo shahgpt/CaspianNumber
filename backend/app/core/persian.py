@@ -52,6 +52,19 @@ def normalize_keep_digits(text: str) -> str:
     return "".join(ch for ch in str(text).translate(_DIGIT_MAP) if ch.isdigit())
 
 
+_TO_FA_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+
+
+def fa_digits(value: object) -> str:
+    """Latin digits to Persian, for numbers inside a message the user reads.
+
+    The opposite direction of `_DIGIT_MAP`: that one folds digits for matching,
+    this one puts a count back into the script of the sentence around it. An
+    error that says "18 پرسنل" is the only Latin numeral on the screen.
+    """
+    return str(value).translate(_TO_FA_DIGITS)
+
+
 def light_normalize(text: str) -> str:
     """For display: unify yeh/kaf/ZWNJ but keep original spacing."""
     if not text:
