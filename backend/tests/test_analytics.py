@@ -97,7 +97,10 @@ def _seed_unit_with_trail() -> tuple[int, int]:
         db.close()
 
 
-def test_counts_weight_folded_reads_and_split_windows():
+def test_a_visit_counts_once_regardless_of_how_many_requests_it_made():
+    """One folded row is one visit. `repeats` counts HTTP calls, and how many
+    calls a visit makes is a front-end detail — scrolling the directory or a
+    window-focus refetch must not turn one visit into four."""
     org_id, emp_id = _seed_unit_with_trail()
     db = SessionLocal()
     try:
@@ -106,29 +109,75 @@ def test_counts_weight_folded_reads_and_split_windows():
         db.close()
 
     totals = overview["totals"]
-    # 5 folded directory reads + 1 card view; the 9-day-old row is out of range.
-    assert totals["directory_views"] == 5
+    # The directory row carries repeats=5; it is still a single visit.
+    assert totals["directory_views"] == 1
     assert totals["card_views"] == 1
-    assert totals["views"] == 6
-    assert totals["searches"] == 5
+    assert totals["views"] == 2
+    assert totals["searches"] == 1
     assert totals["logins"] == 1
     assert totals["failed_logins"] == 1
     assert totals["changes"] == 1
 
-    # The preceding window of equal length holds only the older read.
-    assert overview["previous"]["directory_views"] == 2
+    # The preceding window of equal length holds only the older read (repeats=2).
+    assert overview["previous"]["directory_views"] == 1
 
     assert len(overview["daily"]) == 7
-    assert sum(day["views"] for day in overview["daily"]) == 6
+    assert sum(day["views"] for day in overview["daily"]) == 2
     assert sum(day["logins"] for day in overview["daily"]) == 1
     assert sum(day["changes"] for day in overview["daily"]) == 1
 
-    assert sum(h["views"] for h in overview["hourly"]) == 6
-    assert sum(d["views"] for d in overview["weekday"]) == 6
-    assert overview["top_queries"] == [{"term": "شبکه", "count": 5}]
+    assert sum(h["views"] for h in overview["hourly"]) == 2
+    assert sum(d["views"] for d in overview["weekday"]) == 2
+    assert overview["top_queries"] == [{"term": "شبکه", "count": 1}]
     assert overview["top_people"] == [{"id": emp_id, "name": "مینا رها", "count": 1}]
-    assert overview["by_unit"][0]["views"] == 6
+    assert overview["by_unit"][0]["views"] == 2
     assert overview["directory"]["employees"] == 1
+
+
+def test_scrolling_and_refetching_do_not_inflate_the_count():
+    """The regression this exists for: the audit layer bumps `repeats` on the
+    same row for every extra request a single visit makes. The reported figure
+    must be identical whether that row says 1 or 40."""
+    db = SessionLocal()
+    try:
+        org = Organization(name=_name("واحد"), code=_name("D").upper().replace("-", ""), kind=ORG_FACTORY)
+        db.add(org); db.flush()
+        quiet = ChangeLog(organization_id=org.id, entity="employee", action="DIRECTORY_VIEW",
+                          actor_id=None, actor_name="reader", details={"repeats": 1}, at=_utc_naive(1))
+        db.add(quiet)
+        db.commit()
+        before = build_overview(db, days=7, organization_id=org.id)["totals"]["views"]
+
+        # Same visit, more scrolling and a couple of focus refetches.
+        quiet.details = {"repeats": 40}
+        db.commit()
+        after = build_overview(db, days=7, organization_id=org.id)["totals"]["views"]
+    finally:
+        db.close()
+
+    assert before == 1
+    assert after == before, "a longer visit must not read as more visits"
+
+
+def test_two_separate_visits_do_count_twice():
+    """The other half of the contract: coming back later is a second visit, and
+    the figure has to move — otherwise it would be useless."""
+    db = SessionLocal()
+    try:
+        org = Organization(name=_name("واحد"), code=_name("E").upper().replace("-", ""), kind=ORG_FACTORY)
+        db.add(org); db.flush()
+        db.add_all([
+            ChangeLog(organization_id=org.id, entity="employee", action="DIRECTORY_VIEW",
+                      actor_id=None, actor_name="reader", details=None, at=_utc_naive(1)),
+            ChangeLog(organization_id=org.id, entity="employee", action="DIRECTORY_VIEW",
+                      actor_id=None, actor_name="reader", details=None, at=_utc_naive(2)),
+        ])
+        db.commit()
+        overview = build_overview(db, days=7, organization_id=org.id)
+    finally:
+        db.close()
+
+    assert overview["totals"]["views"] == 2
 
 
 def test_days_are_bucketed_in_the_report_timezone():
@@ -177,16 +226,18 @@ def test_endpoint_is_scoped_to_the_callers_unit():
 
         scoped = client.get("/api/admin/analytics?days=7", headers=manager)
         assert scoped.status_code == 200, scoped.text
-        assert scoped.json()["totals"]["directory_views"] == 5
+        # One folded row = one visit, whatever `repeats` says it cost.
+        assert scoped.json()["totals"]["directory_views"] == 1
 
         # Another unit's numbers are not reachable by asking for them.
         assert client.get("/api/admin/analytics?days=7&organization_id=1",
                           headers=manager).status_code == 404
 
-        # The global admin sees every unit at once when none is selected.
+        # The global admin sees every unit at once when none is selected, so
+        # the unscoped total can never be smaller than one unit's slice.
         everything = client.get("/api/admin/analytics?days=7", headers=headers)
         assert everything.status_code == 200
-        assert everything.json()["totals"]["views"] >= 6
+        assert everything.json()["totals"]["views"] >= scoped.json()["totals"]["views"] > 0
 
 
 def test_active_users_survives_a_deleted_account():
@@ -196,12 +247,17 @@ def test_active_users_survives_a_deleted_account():
     try:
         org = Organization(name=_name("واحد"), code=_name("C").upper().replace("-", ""), kind=ORG_FACTORY)
         db.add(org); db.flush()
+        # A real account, because actor_id is a foreign key. Borrowing whatever
+        # id happened to exist made this test depend on what ran before it.
+        live = User(username=_name("still-here"), password_hash=hash_password("x" * 12),
+                    organization_id=org.id, role=ROLE_UNIT_MANAGER)
+        db.add(live); db.flush()
         db.add_all([
             # A live account, twice: one person, not two.
             ChangeLog(organization_id=org.id, entity="employee", action="DIRECTORY_VIEW",
-                      actor_id=1, actor_name="still-here", at=_utc_naive(1)),
+                      actor_id=live.id, actor_name=live.username, at=_utc_naive(1)),
             ChangeLog(organization_id=org.id, entity="employee", action="VCARD_VIEW",
-                      actor_id=1, actor_name="still-here", at=_utc_naive(1)),
+                      actor_id=live.id, actor_name=live.username, at=_utc_naive(1)),
             # A departed account: id released, name kept.
             ChangeLog(organization_id=org.id, entity="employee", action="DIRECTORY_VIEW",
                       actor_id=None, actor_name="left-the-company", at=_utc_naive(1)),

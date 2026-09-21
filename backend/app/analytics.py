@@ -8,9 +8,19 @@ with the log it is drawn from.
 Two properties of the trail shape the arithmetic here:
 
 * Repeated reads by one actor inside a 15-minute window are folded into a single
-  row that carries a `repeats` counter (see `audit._merge_read_event`). A view is
-  therefore worth `repeats`, not 1, and the row's timestamp is the first of the
-  run rather than the last.
+  row carrying a `repeats` counter (see `audit._merge_read_event`), timestamped
+  at the first read of the run. **One such row counts as one visit, and
+  `repeats` is deliberately ignored.**
+
+  It is tempting to weight by `repeats` — it looks like "how much did they
+  actually read". It is not. `repeats` counts HTTP calls, and how many calls a
+  visit makes is a front-end detail: the directory pages as you scroll, so
+  reaching the third screen triples it, and react-query refetches every loaded
+  page when the window regains focus, multiplying it again. Measured on a real
+  page: one visit plus one scroll moved `repeats` from 2 to 4. Weighted, opening
+  the directory once "cost" four views, which is not a thing a person did.
+  Counting rows instead gives a figure that only moves when a human comes back:
+  scrolling, refetching and refreshing inside the window all stay one visit.
 * Rows are written in UTC. Days and hours are bucketed after shifting into the
   reader's local offset, otherwise "today" starts at 3:30 in the morning.
 """
@@ -54,15 +64,6 @@ def _local(at: datetime | None, offset: timedelta) -> datetime | None:
     return aware.astimezone(timezone.utc) + offset
 
 
-def _repeats(details: object) -> int:
-    if isinstance(details, dict):
-        try:
-            return max(1, int(details.get("repeats", 1)))
-        except (TypeError, ValueError):
-            return 1
-    return 1
-
-
 def _query_text(details: object) -> str:
     if isinstance(details, dict):
         return str(details.get("query", "") or "").strip()
@@ -102,19 +103,21 @@ class _Bucket:
         return f"name:{name}" if name and name != "anonymous" else None
 
     def add(self, row: ChangeLog) -> None:
-        weight = _repeats(row.details)
+        # One row, one visit — never `repeats`. See the note at the top of the
+        # module: `repeats` counts HTTP calls, and the number of calls one visit
+        # makes is a front-end detail, not something the reader did.
         action = row.action
         if action == DIRECTORY_VIEW:
-            self.directory_views += weight
-            self.views += weight
+            self.directory_views += 1
+            self.views += 1
             if _query_text(row.details):
-                self.searches += weight
+                self.searches += 1
         elif action == CARD_VIEW:
-            self.card_views += weight
-            self.views += weight
+            self.card_views += 1
+            self.views += 1
         elif action == LIST_VIEW:
-            self.list_views += weight
-            self.views += weight
+            self.list_views += 1
+            self.views += 1
         elif action == LOGIN_OK:
             self.logins += 1
         elif action == LOGIN_FAIL:
@@ -187,33 +190,32 @@ def build_overview(db: Session, *, days: int, organization_id: int | None) -> di
         at = _local(row.at, offset)
         if at is None:
             continue
-        weight = _repeats(row.details)
         key = at.date().isoformat()
         bucket = daily.get(key)
         is_view = row.action in VIEW_ACTIONS
 
         if bucket is not None:
             if is_view:
-                bucket["views"] += weight
+                bucket["views"] += 1
                 if row.action == DIRECTORY_VIEW and _query_text(row.details):
-                    bucket["searches"] += weight
+                    bucket["searches"] += 1
             elif row.action == LOGIN_OK:
                 bucket["logins"] += 1
             elif row.action in CHANGE_ACTIONS:
                 bucket["changes"] += 1
 
         if is_view:
-            hourly[at.hour] += weight
-            weekday[(at.weekday() + 2) % 7] += weight
-            unit_views[row.organization_id] += weight
+            hourly[at.hour] += 1
+            weekday[(at.weekday() + 2) % 7] += 1
+            unit_views[row.organization_id] += 1
             if row.action == CARD_VIEW and row.entity_id:
-                people[row.entity_id] += weight
+                people[row.entity_id] += 1
             term = _query_text(row.details)
             if term:
-                queries[term] += weight
+                queries[term] += 1
 
         if row.actor_name and row.action != LOGIN_FAIL:
-            actors[row.actor_name] += weight if is_view else 1
+            actors[row.actor_name] += 1
             if row.actor_role:
                 actor_roles[row.actor_name] = row.actor_role
 
